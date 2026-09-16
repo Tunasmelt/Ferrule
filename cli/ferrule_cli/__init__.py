@@ -1,0 +1,1 @@
+"""Ferrule command-line interface."""

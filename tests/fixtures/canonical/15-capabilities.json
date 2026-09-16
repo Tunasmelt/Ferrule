@@ -1,0 +1,1 @@
+{"capabilities":{"secrets":[],"methods":["GET"],"hosts":["api.example.test"],"egress_default":"deny"}}

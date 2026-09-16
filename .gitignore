@@ -1,2 +1,4 @@
 .agent/memory/transcripts/
 .agent/orchestration/logs/
+__pycache__/
+*.py[cod]

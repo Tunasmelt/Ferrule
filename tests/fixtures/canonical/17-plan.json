@@ -1,0 +1,1 @@
+{"plan":{"steps":[{"url":"https://example.test/items","method":"GET","id":"fetch","headers":{},"expect":{"200":{"route":"ok"}}}]}}

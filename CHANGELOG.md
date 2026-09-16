@@ -7,6 +7,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Added — milestone 0a canonicalization
+
+- Added byte-identical Python and Go canonical JSON implementations, a
+  `ferrule artifact canonicalize` command, and 20 shared conformance fixtures.
+- Added rejection of NaN and Infinity and property coverage for idempotence
+  and object-key order independence.
+- **Verified for real**, not just claimed: Go was installed on the dev
+  machine and `python tests/conformance.py` confirmed all 20 fixtures are
+  byte-identical between the Python and Go canonicalizers; `go build ./...`
+  and `go test ./...` both pass. Milestone 0a's actual point — cross-language
+  agreement — now has evidence, not just Python-only test output.
+- Fixed a bug in `agent-os/scripts/memory-sync.mjs`: it only captured the
+  first physical line of a word-wrapped Markdown bullet, silently dropping
+  continuation lines. A recorded blocker about missing Go/Make lost its
+  actionable half to this before being caught and corrected.
+
 ### Added — multi-agent workflow
 
 - **`AGENTS.md` added** as the Codex-facing counterpart to `CLAUDE.md`.

@@ -11,3 +11,6 @@ Append-only. Run memory-consolidate.mjs to merge duplicates; don't hand-delete.
 ---
 
 2026-09-16 | decision | Bootstrapped agent-os workspace | -> memory/decisions/bootstrap.md
+2026-09-16 | decisions | Milestone 0a canonical numbers use plain decimal notation without exponents | -> memory/decisions/milestone-0a-canonical-numbers-use-plain.md
+2026-09-16 | decisions | Canonical JSON is compact UTF-8 with object keys sorted by Unicode code point. | -> memory/decisions/canonical-json-is-compact-utf-8-with-obj.md
+2026-09-16 | blockers | This workstation has neither Go nor Make, so Python tests pass locally but | -> memory/blockers/this-workstation-has-neither-go-nor-make.md

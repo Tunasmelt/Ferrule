@@ -58,6 +58,10 @@ function extractSection(text, heading) {
   const lines = text.split(/\r?\n/);
   const out = [];
   let inSection = false;
+  // Bullets often word-wrap across multiple physical lines in Markdown source
+  // ("- foo\n  bar."). A bullet's continuation lines are indented and carry
+  // no marker of their own, so fold them into the entry currently being
+  // built rather than dropping everything after the first physical line.
   for (const line of lines) {
     if (/^#{1,6}\s/.test(line)) {
       const isTarget = new RegExp(`^#{1,6}\\s*${heading}\\s*$`, "i").test(line.trim());
@@ -67,10 +71,19 @@ function extractSection(text, heading) {
       }
       if (inSection) break; // any subsequent heading ends the section
     }
-    if (inSection) {
-      const m = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
-      if (m) out.push(m[1]);
+    if (!inSection) continue;
+
+    const bulletMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+    if (bulletMatch) {
+      out.push(bulletMatch[1]);
+      continue;
     }
+    const isContinuation = /^\s+\S/.test(line) && !/^\s*$/.test(line);
+    if (isContinuation && out.length > 0) {
+      out[out.length - 1] += " " + line.trim();
+    }
+    // A blank line or a non-indented, non-bullet line ends the current
+    // bullet's continuation without starting a new entry.
   }
   return out;
 }
