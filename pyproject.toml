@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ferrule"
 version = "0.0.0"
 requires-python = ">=3.11"
+dependencies = ["cryptography>=44"]
 
 [project.scripts]
 ferrule = "ferrule_cli.__main__:main"
