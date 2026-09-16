@@ -1,0 +1,25 @@
+{
+  "name": "Ferrule",
+  "language": "polyglot (python + go)",
+  "commands": {
+    "test": "make check",
+    "lint": "make check",
+    "audit": "make security"
+  },
+  "rules": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/SPEC.md"
+  ],
+  "sourceDirs": [
+    "services",
+    "packages",
+    "cli"
+  ],
+  "jargon": ".agent/JARGON.md",
+  "apis": [],
+  "skipPhases": ["design"],
+  "maxReviewRounds": 3,
+  "staleApiDays": 30,
+  "memoryIndexMaxLines": 60
+}
