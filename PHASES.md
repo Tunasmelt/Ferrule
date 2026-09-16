@@ -28,35 +28,61 @@ second milestone in the same phase until the first's gate is green, since
 later milestones usually depend on the data model or interfaces the earlier
 one froze.
 
+**Status convention:** a milestone heading gets `— ✅ CLOSED <date>` appended,
+and its checkboxes flip to `[x]`, only after its gate command has actually
+been run and passed — not when the work merely looks done. Update this file
+in the same commit that closes the gate; don't let it drift from
+`CHANGELOG.md`.
+
+## Progress
+
+| Phase | Milestones closed | Status |
+|---|---|---|
+| 0 — Artifact format | 0a ✅ / 0b ⬜ / 0c ⬜ | in progress |
+| 1 — Plan language | 1a ⬜ / 1b ⬜ / 1c ⬜ | not started |
+| 2 — Proxy & broker | 2a–2d ⬜ | not started |
+| 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
+| 4 — Verification & evidence | 4a–4c ⬜ | not started |
+| 5 — Durable execution | 5a–5c ⬜ | not started |
+| 6 — Drift, learning mode | 6a–6c ⬜ | not started |
+| 7 — Drift detection | 7a–7c ⬜ | not started |
+| 8 — Prose doc ingest | 8a–8b ⬜ | not started |
+
+Update this table in the same commit that closes a milestone's gate.
+
 ---
 
 ## Phase 0 — Artifact format
 
 **Goal:** the artifact idea is real, hashable, signable and diffable.
 
-### Milestone 0a — Canonicalization core
+### Milestone 0a — Canonicalization core — ✅ CLOSED 2026-09-16
 
 Deliverables
-- `packages/artifact` (Python): canonical byte-serialization of the manifest
+- [x] `packages/artifact` (Python): canonical byte-serialization of the manifest
   structure (sorted keys, fixed number formatting, no locale dependence)
-- Go port of the same canonicalization function
-- `ferrule artifact canonicalize` CLI command (prints canonical bytes, for
+- [x] Go port of the same canonicalization function
+- [x] `ferrule artifact canonicalize` CLI command (prints canonical bytes, for
   diffing against the Go output by hand during development)
 
 Test criteria
-- [ ] Property test: canonicalization is idempotent (`canon(canon(x)) == canon(x)`)
-- [ ] Property test: canonicalization is order-independent (shuffled map/dict
+- [x] Property test: canonicalization is idempotent (`canon(canon(x)) == canon(x)`)
+- [x] Property test: canonicalization is order-independent (shuffled map/dict
       key order produces identical output)
-- [ ] Cross-language conformance: Python and Go produce byte-identical output
+- [x] Cross-language conformance: Python and Go produce byte-identical output
       for 20 fixture manifests, including edge cases (empty arrays, nested
       objects, unicode strings, large integers)
 
 Security criteria
-- [ ] Canonicalizer rejects (does not silently coerce) NaN/Infinity in numeric
+- [x] Canonicalizer rejects (does not silently coerce) NaN/Infinity in numeric
       fields — these are non-canonical across JSON implementations
 
-Gate `make gate-0a`
-Exit when: fixtures pass in both languages and the property tests pass.
+Gate `make gate-0a` — **passing** (verified 2026-09-16: `python -m unittest
+discover -s tests -v` — 5/5 tests; `go test ./...` — ok; `python
+tests/conformance.py` — 20/20 fixtures byte-identical). Built by Codex via
+`codex-task.mjs`, verified independently by Claude Code after installing
+Go/Make on the dev workstation. See `CHANGELOG.md` [Unreleased] for detail.
+Exit when: fixtures pass in both languages and the property tests pass. — met.
 
 ### Milestone 0b — Hash, sign, verify
 
