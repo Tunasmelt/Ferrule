@@ -1,0 +1,107 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "milestone",
+      "type": "promptString",
+      "description": "Milestone id, e.g. 0a, 2b, 3c (see docs/PHASES.md)"
+    },
+    {
+      "id": "owner",
+      "type": "pickString",
+      "description": "Who is claiming this milestone?",
+      "options": ["claude", "codex", "cline", "antigravity"],
+      "default": "claude"
+    },
+    {
+      "id": "releaseStatus",
+      "type": "pickString",
+      "description": "Outcome to record",
+      "options": ["done", "failed"],
+      "default": "done"
+    },
+    {
+      "id": "codexPrompt",
+      "type": "promptString",
+      "description": "Bounded task instructions for Codex (one milestone, one prompt)"
+    },
+    {
+      "id": "codexSandbox",
+      "type": "pickString",
+      "description": "Codex sandbox mode",
+      "options": ["workspace-write", "read-only"],
+      "default": "workspace-write"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Orchestrator: Claim status",
+      "type": "shell",
+      "command": "node",
+      "args": ["agent-os/scripts/claim.mjs", "status"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Orchestrator: Claim milestone",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "agent-os/scripts/claim.mjs",
+        "claim",
+        "${input:milestone}",
+        "${input:owner}"
+      ],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Orchestrator: Release milestone",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "agent-os/scripts/claim.mjs",
+        "release",
+        "${input:milestone}",
+        "${input:releaseStatus}"
+      ],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Orchestrator: Dispatch to Codex",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "agent-os/scripts/codex-task.mjs",
+        "--milestone", "${input:milestone}",
+        "--sandbox", "${input:codexSandbox}",
+        "--prompt", "${input:codexPrompt}"
+      ],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Orchestrator: agent-os gate status",
+      "type": "shell",
+      "command": "node",
+      "args": ["agent-os/scripts/gate.mjs", "--status"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Orchestrator: agent-os gate --next",
+      "type": "shell",
+      "command": "node",
+      "args": ["agent-os/scripts/gate.mjs", "--next"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [],
+      "group": "test"
+    }
+  ]
+}
