@@ -100,8 +100,14 @@ itself, rather than working around it.
 
 ## At session end
 
-Write `HANDOFF.md` with `### Decisions` and `### Gotchas` bullets, then run
-`node agent-os/memory-sync.mjs` so the decisions reach tiered memory.
+Update `HANDOFF.md`'s `### Decisions` and `### Gotchas` sections directly, and
+add a dated `CHANGELOG.md` entry for anything decision-worthy. **Do not run
+`memory-sync.mjs` in this project** — this project's decision record is
+`CHANGELOG.md`, not agent-os's tiered `.agent/memory/decisions/` files.
+Running it duplicates every decision as a second, scattered, single-fact file
+that nobody curates — it happened once (2026-09-16) and was deleted as bloat.
+See `.agent/memory/index.md` for the reasoning. `memory-consolidate.mjs` is
+correspondingly not useful here either, since nothing writes to that tier.
 
 ## Supporting scripts
 
@@ -111,9 +117,10 @@ node agent-os/api-check.mjs --scaffold    # create doc stubs
 node agent-os/api-check.mjs               # freshness status (api gate uses this)
 node agent-os/security-check.mjs          # full report + manual checklist
 node agent-os/jargon-extract.mjs          # propose domain vocabulary
-node agent-os/memory-sync.mjs             # session end: handoff -> tiered memory
-node agent-os/memory-consolidate.mjs      # memory health report
 ```
+
+(`memory-sync.mjs` / `memory-consolidate.mjs` exist in `scripts/` for other
+projects that don't already keep a changelog — not used in this one.)
 
 ## Orchestrating Codex for a milestone's coding work
 

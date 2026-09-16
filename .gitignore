@@ -1,4 +1,8 @@
 .agent/memory/transcripts/
+.agent/memory/decisions/
+.agent/memory/blockers/
+.agent/memory/patterns/
+.agent/memory/knowledge/
 .agent/orchestration/logs/
 __pycache__/
 *.py[cod]
