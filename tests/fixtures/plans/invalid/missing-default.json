@@ -1,0 +1,8 @@
+{
+  "hosts": ["api.example.com"],
+  "steps": [{
+    "id": "no-fallback", "method": "GET", "url": "https://api.example.com/items", "headers": {},
+    "pagination": "none",
+    "expect": {"200": {"route": "ok", "map": {"items": "response.items"}}}
+  }]
+}

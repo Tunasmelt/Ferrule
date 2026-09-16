@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrule.dev/schemas/plan.schema.json",
+  "title": "Ferrule restricted plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hosts", "steps"],
+  "properties": {
+    "hosts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/step"}
+    }
+  },
+  "$defs": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route", "map"],
+      "properties": {
+        "route": {"type": "string", "minLength": 1},
+        "map": {"$ref": "#/$defs/mapping"},
+        "when": {"type": "string", "minLength": 1}
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "method", "url", "headers", "pagination", "expect"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        "url": {"type": "string", "minLength": 1},
+        "headers": {"$ref": "#/$defs/stringMap"},
+        "query": {"$ref": "#/$defs/stringMap"},
+        "body": {"$ref": "#/$defs/stringMap"},
+        "condition": {"type": "string", "minLength": 1},
+        "pagination": {"enum": ["cursor", "offset", "link_header", "none"]},
+        "max_pages": {"type": "integer", "minimum": 1},
+        "expect": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^(?:[1-5][0-9]{2}|[1-5]xx|default)$"},
+          "additionalProperties": {"$ref": "#/$defs/route"}
+        }
+      }
+    }
+  }
+}

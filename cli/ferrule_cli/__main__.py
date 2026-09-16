@@ -14,6 +14,7 @@ from ferrule_artifact import (
     sign,
     verify,
 )
+from ferrule_plan_schema import check
 
 
 def _input(path: Path | None) -> bytes:
@@ -46,8 +47,20 @@ def main() -> int:
     diff_parser.add_argument("old_file", type=Path)
     diff_parser.add_argument("new_file", type=Path)
 
+    plan = commands.add_parser("plan")
+    plan_commands = plan.add_subparsers(dest="plan_command", required=True)
+    plan_check = plan_commands.add_parser("check")
+    plan_check.add_argument("file", type=Path)
+
     args = parser.parse_args()
     try:
+        if args.command == "plan":
+            document: object = json.loads(args.file.read_text(encoding="utf-8"))
+            findings = check(document)
+            for finding in findings:
+                print(json.dumps(vars(finding), sort_keys=True))
+            return 1 if findings else 0
+
         if args.artifact_command == "keygen":
             args.directory.mkdir(parents=True, exist_ok=True)
             private_path = args.directory / "dev-private.pem"

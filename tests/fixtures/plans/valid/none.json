@@ -1,0 +1,14 @@
+{
+  "hosts": ["api.acme-erp.example"],
+  "steps": [{
+    "id": "fetch",
+    "method": "GET",
+    "url": "https://api.acme-erp.example/v2/invoices/{{ input.invoice_id }}",
+    "headers": {"Authorization": "Bearer {{ secret.acme_erp_api_key }}"},
+    "pagination": "none",
+    "expect": {
+      "200": {"route": "ok", "map": {"invoice": "response.data"}},
+      "default": {"route": "permanent_error", "map": {"reason": "response.error.message"}}
+    }
+  }]
+}

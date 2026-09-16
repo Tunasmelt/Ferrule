@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Added — milestone 1a static plan checker
+
+- Added the draft 2020-12 restricted-plan schema, CEL context declarations,
+  static findings for template syntax, declared hosts, bounded pagination and
+  default routes, plus the `ferrule plan check` JSON-lines CLI.
+- Added four valid and four invalid hand-written plan fixtures and a guard that
+  prevents HTTP-client or process-execution imports from entering this package.
+- Added `make gate-1a`; this gate is Python-only because plan execution and the
+  Go proxy implementation belong to later milestones.
+
 ### Added — milestone 0c artifact diff
 
 - Added deterministic Python and Go manifest diffs for output schemas, plans,

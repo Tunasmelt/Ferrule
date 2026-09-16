@@ -6,5 +6,6 @@
 .agent/orchestration/logs/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .ferrule/keys/
 .cache/

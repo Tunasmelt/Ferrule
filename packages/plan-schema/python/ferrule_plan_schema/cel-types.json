@@ -1,0 +1,4 @@
+{
+  "input": "map<string, dyn>",
+  "response": "map<string, dyn>"
+}

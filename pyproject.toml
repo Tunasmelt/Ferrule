@@ -6,11 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "ferrule"
 version = "0.0.0"
 requires-python = ">=3.11"
-dependencies = ["cryptography>=44"]
+dependencies = ["cryptography>=44", "jsonschema>=4.23"]
 
 [project.scripts]
 ferrule = "ferrule_cli.__main__:main"
 
 [tool.setuptools]
-packages = ["ferrule_artifact", "ferrule_cli"]
-package-dir = {ferrule_artifact = "packages/artifact/python/ferrule_artifact", ferrule_cli = "cli/ferrule_cli"}
+packages = ["ferrule_artifact", "ferrule_cli", "ferrule_plan_schema"]
+package-dir = {ferrule_artifact = "packages/artifact/python/ferrule_artifact", ferrule_cli = "cli/ferrule_cli", ferrule_plan_schema = "packages/plan-schema/python/ferrule_plan_schema"}
+
+[tool.setuptools.package-data]
+ferrule_plan_schema = ["plan.schema.json", "cel-types.json"]

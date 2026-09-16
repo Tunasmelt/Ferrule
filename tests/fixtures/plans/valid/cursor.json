@@ -1,0 +1,16 @@
+{
+  "hosts": ["api.example.com"],
+  "steps": [{
+    "id": "list",
+    "method": "GET",
+    "url": "https://api.example.com/items",
+    "headers": {},
+    "query": {"account": "{{ input.account.id }}", "cursor": "{{ response.next_cursor }}"},
+    "pagination": "cursor",
+    "max_pages": 20,
+    "expect": {
+      "200": {"route": "ok", "map": {"items": "response.items"}},
+      "default": {"route": "error", "map": {"reason": "response.error"}}
+    }
+  }]
+}

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -14,7 +15,11 @@ class CLITests(unittest.TestCase):
     ) -> subprocess.CompletedProcess[bytes]:
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(
-            [str(ROOT / "cli"), str(ROOT / "packages" / "artifact" / "python")]
+            [
+                str(ROOT / "cli"),
+                str(ROOT / "packages" / "artifact" / "python"),
+                str(ROOT / "packages" / "plan-schema" / "python"),
+            ]
         )
         return subprocess.run(
             [sys.executable, "-m", "ferrule_cli", *arguments],
@@ -88,6 +93,19 @@ class CLITests(unittest.TestCase):
         self.assertEqual(first.stdout, second.stdout)
         self.assertIn(b'  "plan_changes": [', first.stdout)
         self.assertIn(b'"field": "url"', first.stdout)
+
+    def test_plan_check_emits_json_lines_and_status(self) -> None:
+        fixtures = ROOT / "tests" / "fixtures" / "plans"
+        accepted = self.run_cli("plan", "check", str(fixtures / "valid" / "none.json"))
+        rejected = self.run_cli(
+            "plan", "check", str(fixtures / "invalid" / "undeclared-host.json")
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+        self.assertEqual(b"", accepted.stdout)
+        self.assertEqual(1, rejected.returncode, rejected.stderr)
+        finding = json.loads(rejected.stdout)
+        self.assertEqual("UNDECLARED_HOST", finding["code"])
+        self.assertIn("path", finding)
 
 
 if __name__ == "__main__":

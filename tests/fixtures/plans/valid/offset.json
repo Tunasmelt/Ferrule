@@ -1,0 +1,17 @@
+{
+  "hosts": ["catalog.example.org"],
+  "steps": [{
+    "id": "search",
+    "method": "POST",
+    "url": "https://catalog.example.org/search",
+    "headers": {"X-Api-Key": "{{ secret.catalog.key }}"},
+    "body": {"term": "{{ input.search.term }}"},
+    "condition": "input.search.term != ''",
+    "pagination": "offset",
+    "max_pages": 5,
+    "expect": {
+      "2xx": {"route": "results", "map": {"matches": "response.matches"}, "when": "response.matches.size() > 0"},
+      "default": {"route": "error", "map": {"reason": "response.error"}}
+    }
+  }]
+}

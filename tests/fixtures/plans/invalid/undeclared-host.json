@@ -1,0 +1,8 @@
+{
+  "hosts": ["safe.example.com"],
+  "steps": [{
+    "id": "wrong-host", "method": "GET", "url": "https://other.example.com/items", "headers": {},
+    "pagination": "none",
+    "expect": {"default": {"route": "error", "map": {"reason": "response.error"}}}
+  }]
+}

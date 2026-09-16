@@ -1,0 +1,9 @@
+{
+  "hosts": ["api.example.com"],
+  "steps": [{
+    "id": "bad-template", "method": "GET",
+    "url": "https://api.example.com/{{ environment.token }}", "headers": {},
+    "pagination": "none",
+    "expect": {"default": {"route": "error", "map": {"reason": "response.error"}}}
+  }]
+}

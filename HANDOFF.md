@@ -148,6 +148,14 @@ directly reusable for phase 6. Do not rebuild them from scratch; port them.
 
 ### Decisions
 
+- Bare plan documents carry a required top-level `hosts` list. It mirrors the
+  full artifact's `capabilities.hosts` so the milestone-1a checker can validate
+  host confinement without needing a complete node manifest.
+- Milestone 1a accepts CEL expressions only as non-empty strings. Optional step
+  `condition` and response-route `when` fields preserve the SPEC's condition
+  and body-predicate shape; parsing, typing, and evaluation remain milestone 1b.
+- `make gate-1a` is Python-only. No Go plan implementation is added before the
+  phase-2 proxy independently re-renders signed plans.
 - Milestone 0c treats a new output field as required when its existing port has
   no explicit JSON Schema `required` array; an explicit array is authoritative.
 - Artifact diffs recurse through schema properties and plan/capability objects,
@@ -158,5 +166,7 @@ directly reusable for phase 6. Do not rebuild them from scratch; port them.
 
 ### Gotchas
 
+- On this Windows setup, Ruff and mypy are installed as Python modules but their
+  console scripts are not on `PATH`; use `python -m ruff` and `python -m mypy`.
 - Go 1.27.1 is installed at `C:\Program Files\Go` but is not on the default
   `PATH`; prepend that directory before running Go or Make targets.

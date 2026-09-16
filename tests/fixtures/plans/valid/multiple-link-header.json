@@ -1,0 +1,28 @@
+{
+  "hosts": ["api.example.net"],
+  "steps": [
+    {
+      "id": "create",
+      "method": "POST",
+      "url": "https://api.example.net/jobs",
+      "headers": {"Authorization": "Bearer {{ secret.jobs_token }}"},
+      "body": {"name": "{{ input.job_name }}"},
+      "pagination": "none",
+      "expect": {
+        "201": {"route": "created", "map": {"job_id": "response.id"}},
+        "default": {"route": "error", "map": {"reason": "response.error"}}
+      }
+    },
+    {
+      "id": "pages",
+      "method": "GET",
+      "url": "https://api.example.net/jobs/{{ response.job_id }}/events",
+      "headers": {},
+      "pagination": "link_header",
+      "expect": {
+        "200": {"route": "ok", "map": {"events": "response.data"}},
+        "default": {"route": "error", "map": {"reason": "response.error"}}
+      }
+    }
+  ]
+}
