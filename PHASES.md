@@ -38,7 +38,7 @@ in the same commit that closes the gate; don't let it drift from
 
 | Phase | Milestones closed | Status |
 |---|---|---|
-| 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ⬜ | in progress |
+| 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
 | 1 — Plan language | 1a ⬜ / 1b ⬜ / 1c ⬜ | not started |
 | 2 — Proxy & broker | 2a–2d ⬜ | not started |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
@@ -125,34 +125,47 @@ artifact sections exist. See `CHANGELOG.md` [Unreleased] for detail.
 Exit when: sign/verify round-trips and mutation/cross-artifact tests pass in
 both languages. — met.
 
-### Milestone 0c — Diff
+### Milestone 0c — Diff — ✅ CLOSED 2026-09-16
 
 Deliverables
-- Artifact diff (schema changes, plan changes, capability changes, breaking
-  flag) matching the shape in `docs/API.md`'s
-  `GET /nodes/.../diff` response
-- `ferrule artifact diff` CLI command
+- [x] Artifact diff (schema changes, plan changes, capability changes, breaking
+      flag) matching the shape in `docs/API.md`'s
+      `GET /nodes/.../diff` response
+- [x] `ferrule artifact diff` CLI command
 
 Test criteria
-- [ ] Diff between two versions of the same 5 fixture artifacts (modified by
+- [x] Diff between two versions of the same 5 fixture artifacts (modified by
       hand) produces stable, human-readable output
-- [ ] Diff correctly flags `breaking: true` when an output port gains a
+- [x] Diff correctly flags `breaking: true` when an output port gains a
       required field, and `false` when a field is only added as optional or
       to an unmapped path
-- [ ] Diff output is itself deterministic (running twice on the same pair
+- [x] Diff output is itself deterministic (running twice on the same pair
       produces byte-identical output)
 
-Gate `make gate-0c`
+Gate `make gate-0c` — **passing** (verified 2026-09-16, independently
+re-run: 15/15 Python tests including the new diff suite, `go test ./...`
+ok; `make check`/`make conform` re-run clean to confirm no 0a/0b
+regression). Built by Codex via `codex-task.mjs`. Judgement call (Codex's,
+reviewed and accepted): when a port's schema has no explicit `required`
+array, any newly added field on an existing port is conservatively treated
+as breaking; when `required` is present, only listed fields count. Only
+`schema_changes` on an *existing* output port drives `breaking` — a brand
+new port, and any `plan_changes`/`capability_changes`, are never breaking on
+their own, matching the "severity scoped to mapped fields" principle from
+`SPEC.md` §6.3. Verified by hand that fixture pair 02 reproduces `API.md`'s
+own documented example exactly. See `CHANGELOG.md` [Unreleased] for detail.
 Exit when: diff fixtures pass and breaking-change classification is correct
-on all 5 hand-modified pairs.
+on all 5 hand-modified pairs. — met.
 
-### Phase 0 gate
+### Phase 0 gate — ✅ CLOSED 2026-09-16
 
 `make gate-0` = `gate-0a` + `gate-0b` + `gate-0c`, plus:
-- [ ] All three CLI command groups (`canonicalize`, `build/hash/sign/verify`,
-      `diff`) are reachable from a single `ferrule artifact` entrypoint
+- [x] All three CLI command groups (`canonicalize`, `build/hash/sign/verify`,
+      `diff`) are reachable from a single `ferrule artifact` entrypoint —
+      confirmed: `ferrule artifact --help` lists
+      `{canonicalize,build,hash,sign,verify,keygen,diff}` under one parser.
 
-Exit when: `make gate-0` exits 0.
+Exit when: `make gate-0` exits 0. — **met, all of Phase 0 is closed.**
 
 ---
 
