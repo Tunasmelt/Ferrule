@@ -38,7 +38,7 @@ in the same commit that closes the gate; don't let it drift from
 
 | Phase | Milestones closed | Status |
 |---|---|---|
-| 0 — Artifact format | 0a ✅ / 0b ⬜ / 0c ⬜ | in progress |
+| 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ⬜ | in progress |
 | 1 — Plan language | 1a ⬜ / 1b ⬜ / 1c ⬜ | not started |
 | 2 — Proxy & broker | 2a–2d ⬜ | not started |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
@@ -84,31 +84,46 @@ tests/conformance.py` — 20/20 fixtures byte-identical). Built by Codex via
 Go/Make on the dev workstation. See `CHANGELOG.md` [Unreleased] for detail.
 Exit when: fixtures pass in both languages and the property tests pass. — met.
 
-### Milestone 0b — Hash, sign, verify
+### Milestone 0b — Hash, sign, verify — ✅ CLOSED 2026-09-16
 
 Deliverables
-- `packages/artifact` build/hash/sign/verify (ed25519) in Python and Go
-- `ferrule artifact {build,hash,sign,verify}` CLI commands
-- Local key generation for dev signing (documented as dev-only, not for
-  anything resembling production custody)
+- [x] `packages/artifact` build/hash/sign/verify (ed25519) in Python
+      (`cryptography`) and Go (stdlib `crypto/ed25519`)
+- [x] `ferrule artifact {build,hash,sign,verify}` CLI commands, plus a
+      dev-only `keygen` command not in the original spec but needed to
+      generate the local keypair the other four commands depend on
+- [x] Local key generation for dev signing (documented as dev-only, not for
+      anything resembling production custody; overwrite-protected, private
+      key written `0600`, `.ferrule/keys/` gitignored)
 
 Test criteria
-- [ ] Round-trip: build → sign → verify passes for the same 20 fixture
+- [x] Round-trip: build → sign → verify passes for the same 20 fixture
       artifacts from 0a
-- [ ] Any single-byte mutation of a signed artifact fails verification
-- [ ] Verification fails closed on a missing, truncated, or wrong-length
+- [x] Any single-byte mutation of a signed artifact fails verification
+- [x] Verification fails closed on a missing, truncated, or wrong-length
       signature (no exception that could be caught and ignored by a caller)
-- [ ] Verification fails on a signature valid for a *different* artifact's
+- [x] Verification fails on a signature valid for a *different* artifact's
       hash (no cross-artifact signature reuse)
+- [x] (added beyond the original spec) bidirectional cross-language
+      verification: a Python-produced signature verifies in Go and vice
+      versa, across all 20 fixtures
 
 Security criteria
-- [ ] Dev signing key is never committed; `.gitignore`/CI check confirms
-- [ ] Verify path does not accept an "unsigned" or "skip verification" mode
-      via any flag or environment variable
+- [x] Dev signing key is never committed; `.gitignore`/CI check confirms
+- [x] Verify path does not accept an "unsigned" or "skip verification" mode
+      via any flag or environment variable — confirmed by reading both
+      `verify()` implementations directly, not just by the tests passing
 
-Gate `make gate-0b`
+Gate `make gate-0b` — **passing** (verified 2026-09-16, independently
+re-run, not just accepted from Codex's self-report: 11/11 Python tests,
+`go test ./...` ok, 20/20 canonicalization fixtures, 20/20 cross-language
+signature fixtures both directions; `ruff` + `mypy --strict` clean). Built
+by Codex via `codex-task.mjs`. Scope decision (Codex's, reviewed and
+accepted): `artifact_hash = sha256(canonical(manifest))` only — the
+`|| plan || fixtures` part of `SPEC.md`'s formula is deferred until those
+artifact sections exist. See `CHANGELOG.md` [Unreleased] for detail.
 Exit when: sign/verify round-trips and mutation/cross-artifact tests pass in
-both languages.
+both languages. — met.
 
 ### Milestone 0c — Diff
 
