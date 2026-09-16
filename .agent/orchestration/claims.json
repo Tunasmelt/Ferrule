@@ -4,7 +4,7 @@
     "owner": "codex",
     "status": "done",
     "startedAt": "2026-09-16T21:50:37.926Z",
-    "endedAt": "2026-09-16T22:11:46.007Z",
-    "note": "Go installed; conformance verified 20/20 fixtures match, go test + go build pass. make itself still missing."
+    "endedAt": "2026-09-16T22:28:50.893Z",
+    "note": "make gate-0a passes literally: 5 python tests, go test, 20/20 conformance fixtures"
   }
 }
