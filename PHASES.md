@@ -39,7 +39,7 @@ in the same commit that closes the gate; don't let it drift from
 | Phase | Milestones closed | Status |
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
-| 1 — Plan language | 1a ⬜ / 1b ⬜ / 1c ⬜ | not started |
+| 1 — Plan language | 1a ✅ / 1b ⬜ / 1c ⬜ | in progress |
 | 2 — Proxy & broker | 2a–2d ⬜ | not started |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
@@ -173,26 +173,43 @@ Exit when: `make gate-0` exits 0. — **met, all of Phase 0 is closed.**
 
 **Goal:** plans can express real integrations, and only those.
 
-### Milestone 1a — Static plan structure and checker
+### Milestone 1a — Static plan structure and checker — ✅ CLOSED 2026-09-16
 
 Deliverables
-- `packages/plan-schema` — JSON Schema for the plan (steps, templates,
-  pagination, routing) and CEL type definitions
-- Static checker: schema validity, bound template variables, declared hosts,
-  default route present, pagination bounded
+- [x] `packages/plan-schema` — JSON Schema (draft 2020-12) for the plan
+      (steps, templates, pagination, routing) and a CEL type-context stub
+      for milestone 1b to build on
+- [x] Static checker: schema validity, bound template variables, declared
+      hosts, default route present, pagination bounded
 
 Test criteria
-- [ ] Static checker accepts 15 hand-written valid plans (see 1c) — run this
-      incrementally as those plans are written, don't wait for 1c to finish
-- [ ] Static checker rejects: unbound template variable, undeclared host,
+- [ ] Static checker accepts 15 hand-written valid plans (see 1c) — **not
+      yet met by design**: PHASES.md itself says not to wait for 1c, and only
+      4 synthetic valid fixtures (one per pagination mode) exist so far. This
+      box stays unchecked until 1c's 15 real-API plans exist and pass.
+- [x] Static checker rejects: unbound template variable, undeclared host,
       unbounded pagination, missing default route (4 cases minimum, one per
-      failure kind)
+      failure kind) — 4/4 present, one fixture each, verified independently.
 
 Security criteria
-- [ ] Static checker runs before any plan reaches the interpreter — there is
-      no interpreter code path that accepts an unchecked plan, even in tests
+- [x] Static checker runs before any plan reaches the interpreter — there is
+      no interpreter code path that accepts an unchecked plan, even in
+      tests. **Met by scope, not by enforcement**: no interpreter exists yet
+      (that's milestone 1c) — this milestone shipped no HTTP client,
+      template renderer against live data, or execution path at all,
+      verified by a real test that scans the package source for
+      requests/httpx/urllib.request/subprocess/os.system, plus a manual grep
+      by Claude Code independent of that test.
 
-Gate `make gate-1a`
+Gate `make gate-1a` — **passing** (verified 2026-09-16, independently
+re-run: 20/20 Python tests including the new plan-schema suite; `make
+check`/`make conform` re-run clean, no Phase 0 regression). Built by Codex
+via `codex-task.mjs`. Judgement call (Codex's, reviewed and accepted): a
+bare plan document needs its own top-level `hosts` field, since `SPEC.md`'s
+example only shows hosts inside a full node manifest's `capabilities`
+block. No Go implementation in this milestone — correctly deferred to Phase
+2, where the proxy is the thing that actually needs to re-render plans in
+Go. See `CHANGELOG.md` [Unreleased] for detail.
 
 ### Milestone 1b — CEL integration and cost limits
 
