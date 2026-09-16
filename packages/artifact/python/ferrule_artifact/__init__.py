@@ -1,4 +1,5 @@
 from .canonical import CanonicalizationError, canonicalize
+from .diff import diff
 from .artifact import (
     artifact_hash,
     build,
@@ -15,6 +16,7 @@ __all__ = [
     "build",
     "canonicalize",
     "decode_signature",
+    "diff",
     "encode_signature",
     "generate_dev_keypair",
     "sign",

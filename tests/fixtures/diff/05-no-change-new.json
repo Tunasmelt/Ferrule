@@ -1,0 +1,1 @@
+{"identity":{"node_id":"acme.get-invoice","semver":"1.0.0"},"output_schema":{"ports":{"ok":{"type":"object","properties":{"invoice_id":{"type":"string"}}}}},"plan":{"steps":[{"id":"fetch","method":"GET","url":"/v2/invoices"}]},"capabilities":{"hosts":["api.acme.example"],"methods":["GET"]}}

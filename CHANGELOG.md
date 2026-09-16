@@ -7,6 +7,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Added — milestone 0c artifact diff
+
+- Added deterministic Python and Go manifest diffs for output schemas, plans,
+  and capabilities, including conservative breaking-change classification.
+- Added `ferrule artifact diff`, five real manifest fixture pairs, and the
+  `make gate-0c` milestone gate.
+
 ### Added — milestone 0a canonicalization
 
 - Added byte-identical Python and Go canonical JSON implementations, a

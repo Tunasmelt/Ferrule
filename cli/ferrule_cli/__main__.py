@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from ferrule_artifact import (
     artifact_hash,
     build,
     decode_signature,
+    diff,
     encode_signature,
     generate_dev_keypair,
     sign,
@@ -40,6 +42,10 @@ def main() -> int:
     keygen_parser = subcommands.add_parser("keygen")
     keygen_parser.add_argument("--directory", type=Path, default=Path(".ferrule/keys"))
 
+    diff_parser = subcommands.add_parser("diff")
+    diff_parser.add_argument("old_file", type=Path)
+    diff_parser.add_argument("new_file", type=Path)
+
     args = parser.parse_args()
     try:
         if args.artifact_command == "keygen":
@@ -53,6 +59,16 @@ def main() -> int:
             private_path.chmod(0o600)
             public_path.write_bytes(public_key)
             print(f"development-only keypair written to {args.directory}")
+            return 0
+
+        if args.artifact_command == "diff":
+            print(
+                json.dumps(
+                    diff(args.old_file.read_bytes(), args.new_file.read_bytes()),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
 
         raw = _input(args.file)

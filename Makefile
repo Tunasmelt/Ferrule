@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -18,3 +18,6 @@ security:
 gate-0a: check conform
 
 gate-0b: check conform signing-conform
+
+gate-0c: check
+	python -m unittest tests.test_diff tests.test_cli -v

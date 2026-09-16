@@ -74,6 +74,21 @@ class CLITests(unittest.TestCase):
             self.assertEqual(1, rejected.returncode)
             self.assertIn(b"verification failed", rejected.stderr)
 
+    def test_diff_is_stable_human_readable_json(self) -> None:
+        fixtures = ROOT / "tests" / "fixtures" / "diff"
+        arguments = (
+            "artifact",
+            "diff",
+            str(fixtures / "03-plan-url-old.json"),
+            str(fixtures / "03-plan-url-new.json"),
+        )
+        first = self.run_cli(*arguments)
+        second = self.run_cli(*arguments)
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        self.assertIn(b'  "plan_changes": [', first.stdout)
+        self.assertIn(b'"field": "url"', first.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

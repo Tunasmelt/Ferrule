@@ -148,12 +148,15 @@ directly reusable for phase 6. Do not rebuild them from scratch; port them.
 
 ### Decisions
 
+- Milestone 0c treats a new output field as required when its existing port has
+  no explicit JSON Schema `required` array; an explicit array is authoritative.
+- Artifact diffs recurse through schema properties and plan/capability objects,
+  sorting ports, fields, and step IDs for deterministic output.
 - Milestone 0a canonical numbers use plain decimal notation without exponents
   or insignificant zeroes; negative zero canonicalizes to zero.
 - Canonical JSON is compact UTF-8 with object keys sorted by Unicode code point.
 
 ### Gotchas
 
-- This workstation has neither Go nor Make, so Python tests pass locally but
-  the Go conformance suite and `make gate-0a` still need to run in CI or on a
-  Go-equipped workstation.
+- Go 1.27.1 is installed at `C:\Program Files\Go` but is not on the default
+  `PATH`; prepend that directory before running Go or Make targets.
