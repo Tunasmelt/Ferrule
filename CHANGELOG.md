@@ -7,27 +7,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
-### Known issues — Phase 0 + Phase 1 audit findings (2026-09-17, not yet fixed)
+### Known issues — Phase 0 + Phase 1 audit findings (2026-09-17)
 
 Two independent audit passes (Codex fresh-context + Claude Code, each
 verifying the other's and its own findings by direct reproduction, not
 just static reading) found 11 real issues across Phase 0 and Phase 1.
-Deliberately deferred — fix before or during Phase 2 work, not blocking
-Phase 1's closure since all 11 are pre-existing gaps in already-gated code,
-not new regressions.
+None were new regressions — all were pre-existing gaps in already-gated
+code. The 2 High findings were fixed the same day (2026-09-17, see "Fixed"
+below); the remaining 9 stay deferred to before or during Phase 2 work.
 
-**High**
-- Pagination continuation in the interpreter follows a response-supplied
-  `next` URL (`offset`) or `Link` header (`link_header`) with **no check
-  against the plan's declared `hosts`** — reproduced directly: a plan
-  declaring only `api.declared.example` followed a mock `next` value
-  straight to `attacker.invalid`. `packages/interpreter/python/ferrule_interpreter/interpreter.py`
-  (`_next`/`_request`).
-- `artifact diff` does not detect a field going from optional to required,
-  any `enum`/`const`/`pattern`/bounds/`additionalProperties` tightening, or
-  removal of an empty-schema output port — all three reproduced directly;
-  a genuinely incompatible change can classify `breaking: false`.
-  `packages/artifact/{python,go}/*diff*`.
+**High — FIXED 2026-09-17**
+- ~~Pagination continuation in the interpreter follows a response-supplied
+  `next` URL (`offset`) or `Link` header (`link_header`) with no check
+  against the plan's declared `hosts`~~ — fixed: `_request()` now validates
+  a continuation URL's host against `plan.hosts` before issuing it, raising
+  `UndeclaredHostError` instead of silently following an undeclared host.
+  Re-reproduced the original attack against the patched code: exactly one
+  request is made, the attacker host is never reached.
+  `packages/interpreter/python/ferrule_interpreter/interpreter.py`.
+- ~~`artifact diff` does not detect a field going from optional to
+  required, any `enum`/`const`/`pattern`/bounds/`additionalProperties`
+  tightening, or removal of an empty-schema output port~~ — fixed: field
+  comparison now tracks requiredness (`became_required`/`became_optional`)
+  and constraint changes (`constraint_changed`, naming which constraint),
+  plus whole-port removal (`port_removed`). Breaking policy follows this
+  project's own established convention (tightening the output contract is
+  breaking, widening is visible but not breaking) — re-reproduced all
+  three original blind spots directly against the patched code; all three
+  now correctly report `breaking: true`, and the widening directions
+  (required→optional, enum growing, a brand-new port) correctly stay
+  `breaking: false`. Go has full parity coverage across every constraint
+  type. `packages/artifact/{python,go}/*diff*`.
 
 **Medium**
 - `artifact diff`'s plan-change detection ignores step reordering and every
