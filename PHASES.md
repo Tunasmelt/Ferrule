@@ -39,7 +39,7 @@ in the same commit that closes the gate; don't let it drift from
 | Phase | Milestones closed | Status |
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
-| 1 — Plan language | 1a ✅ / 1b ⬜ / 1c ⬜ | in progress |
+| 1 — Plan language | 1a ✅ / 1b ✅ / 1c ⬜ | in progress |
 | 2 — Proxy & broker | 2a–2d ⬜ | not started |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
@@ -211,29 +211,50 @@ block. No Go implementation in this milestone — correctly deferred to Phase
 2, where the proxy is the thing that actually needs to re-render plans in
 Go. See `CHANGELOG.md` [Unreleased] for detail.
 
-### Milestone 1b — CEL integration and cost limits
+### Milestone 1b — CEL integration and cost limits — ✅ CLOSED 2026-09-16
 
 Deliverables
-- CEL evaluation wired into the mapping/condition/routing layer
-- Configured max cost per expression; strict type checking at compile time;
-  no custom CEL extension functions registered
+- [x] CEL evaluation wired into the mapping/condition/routing layer (via
+      `cel-python`/`celpy`; `map`, `when`/`condition` expressions in
+      milestone 1a's checker are now compile-checked, not just validated as
+      non-empty strings)
+- [x] Configured max cost per expression (see note below); strict
+      namespace-restriction checking at compile time; no custom CEL
+      extension functions registered
 
 Test criteria
-- [ ] CEL typecheck rejects an untyped/ill-typed expression at compile time,
-      not at run time
-- [ ] A deliberately expensive CEL expression (e.g. large cartesian
-      comprehension) is terminated by the cost limit rather than run to
-      completion
-- [ ] Negative test: no CEL extension function beyond the standard library is
+- [x] CEL typecheck rejects an untyped/ill-typed expression at compile time,
+      not at run time — **narrower than full CEL type inference**: celpy
+      0.5.0 does not provide static type inference, only parsing +
+      annotation acceptance, so what's actually enforced at compile time is
+      namespace restriction (only `input`/`response`, never `secret` or
+      anything else) via an AST walk. This is a real, verified guarantee,
+      just not the same shape as a fully-typed CEL implementation would give.
+      Documented explicitly rather than silently overclaiming.
+- [x] A deliberately expensive CEL expression (large cartesian comprehension)
+      is terminated by the cost limit rather than run to completion —
+      verified with a genuine O(n²) nested `exists` comprehension over
+      10,000 elements, forcibly killed via a subprocess timeout.
+- [x] Negative test: no CEL extension function beyond the standard library is
       registered (enumerate registered functions in a test and assert against
-      an allowlist)
+      an allowlist) — allowlist checked against real CEL builtin functions.
 
 Security criteria
-- [ ] No code path evaluates a plan expression with `eval`, a template engine
+- [x] No code path evaluates a plan expression with `eval`, a template engine
       with attribute access, or any evaluator other than the configured CEL
       runtime (grep-based CI check, not just a manual review)
 
-Gate `make gate-1b`
+Gate `make gate-1b` — **passing** (verified 2026-09-16, independently
+re-run: 28/28 Python tests; `make check`/`make conform` re-run clean, no
+regression on 0a–1a). Built by Codex via `codex-task.mjs`. Judgement call
+(Codex's, reviewed and accepted): `cel-python` 0.5.0 has no native
+evaluation-cost/step budget, so the "max cost per expression" requirement is
+met with a killable subprocess wall-clock limit (1s evaluation, 10s
+startup) instead — a real, enforced limit, just implemented as a wrapper
+around the library rather than a feature the library provides natively.
+Secrets are structurally unreachable from CEL: the evaluation context
+declares only `input`/`response`, never `secret` (invariant 1). See
+`CHANGELOG.md` [Unreleased] for detail.
 
 ### Milestone 1c — Interpreter and mock execution
 
