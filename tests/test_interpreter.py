@@ -9,7 +9,13 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "interpreter" / "python"))
 sys.path.insert(0, str(ROOT / "packages" / "plan-schema" / "python"))
 
-from ferrule_interpreter import PlanRejected, Response, classify_plan, run  # noqa: E402
+from ferrule_interpreter import (  # noqa: E402
+    PlanRejected,
+    Response,
+    UndeclaredHostError,
+    classify_plan,
+    run,
+)
 from ferrule_interpreter.mock import FixtureServer  # noqa: E402
 from ferrule_plan_schema import validate_schema  # noqa: E402
 
@@ -54,6 +60,46 @@ class InterpreterTests(unittest.TestCase):
         with self.assertRaises(PlanRejected):
             run(plan, {}, transport=transport)
         self.assertFalse(called)
+
+    def test_offset_pagination_rejects_undeclared_host_before_transport(self) -> None:
+        plan = json.loads((self.fixtures / "plans" / "execution" / "poke-list.json").read_text())
+        requests: list[object] = []
+
+        def transport(request: object) -> Response:
+            requests.append(request)
+            return Response(200, {}, {"results": [], "next": "https://attacker.invalid/next"})
+
+        with self.assertRaisesRegex(UndeclaredHostError, "attacker.invalid"):
+            run(plan, {}, transport=transport)
+        self.assertEqual(1, len(requests))
+
+    def test_link_header_pagination_rejects_undeclared_host_before_transport(self) -> None:
+        plan = json.loads((self.fixtures / "plans" / "execution" / "github-issues.json").read_text())
+        requests: list[object] = []
+
+        def transport(request: object) -> Response:
+            requests.append(request)
+            return Response(200, {"link": '<https://attacker.invalid/next>; rel="next"'}, {"data": []})
+
+        with self.assertRaisesRegex(UndeclaredHostError, "attacker.invalid"):
+            run(plan, {}, transport=transport)
+        self.assertEqual(1, len(requests))
+
+    def test_offset_pagination_allows_declared_host(self) -> None:
+        plan = json.loads((self.fixtures / "plans" / "execution" / "poke-list.json").read_text())
+        responses = iter([
+            Response(200, {}, {"results": [{"name": "bulbasaur"}], "next": "https://pokeapi.co/page/2"}),
+            Response(200, {}, {"results": [{"name": "ivysaur"}], "next": None}),
+        ])
+        requests: list[object] = []
+
+        def transport(request: object) -> Response:
+            requests.append(request)
+            return next(responses)
+
+        result = run(plan, {}, transport=transport)
+        self.assertEqual({"route": "ok", "output": {"names": ["bulbasaur", "ivysaur"]}}, result)
+        self.assertEqual(2, len(requests))
 
     def test_coverage_artifact_has_all_plans(self) -> None:
         records = json.loads((self.fixtures / "plans" / "coverage.json").read_text())

@@ -16,6 +16,10 @@ class PlanRejected(ValueError):
     pass
 
 
+class UndeclaredHostError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class Response:
     status: int
@@ -59,7 +63,12 @@ def _context(response: Response) -> dict[str, object]:
     return body
 
 
-def _request(step: Mapping[str, object], input_value: dict[str, object], previous: dict[str, object], url: str | None = None) -> Request:
+def _request(step: Mapping[str, object], input_value: dict[str, object], previous: dict[str, object], declared_hosts: set[str], url: str | None = None) -> Request:
+    if url is not None:
+        host = urlsplit(url).hostname
+        if host is None or host.lower() not in declared_hosts:
+            displayed_host = host if host is not None else "<missing>"
+            raise UndeclaredHostError(f"pagination URL host {displayed_host!r} is not declared in plan hosts")
     headers = {str(k): render(str(v), input_value, previous) for k, v in cast(Mapping[object, object], step["headers"]).items()}
     query = {str(k): render(str(v), input_value, previous) for k, v in cast(Mapping[object, object], step.get("query", {})).items()}
     rendered_url = url or render(cast(str, step["url"]), input_value, previous)
@@ -127,6 +136,7 @@ def run(plan: object, input: dict[str, object], transport: Transport | None = No
     if findings:
         raise PlanRejected("; ".join(f"{item.code} at {item.path}" for item in findings))
     document = cast(Mapping[str, object], plan)
+    declared_hosts = {cast(str, host).lower() for host in cast(list[object], document["hosts"])}
     previous: dict[str, object] = {}
     final: dict[str, object] = {}
     sender = transport or _http
@@ -140,7 +150,7 @@ def run(plan: object, input: dict[str, object], transport: Transport | None = No
         route_name = ""
         limit = cast(int, step.get("max_pages", 1))
         for _ in range(limit):
-            request = _request(step, input, previous, next_url)
+            request = _request(step, input, previous, declared_hosts, next_url)
             response = sender(request)
             route_name, page = _route(step, response, input)
             _merge(merged, page)

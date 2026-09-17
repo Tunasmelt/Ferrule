@@ -12,13 +12,18 @@ import (
 )
 
 type SchemaChange struct {
-	Port   string `json:"port"`
-	Field  string `json:"field"`
-	Change string `json:"change"`
-	Type   any    `json:"type,omitempty"`
-	From   any    `json:"from,omitempty"`
-	To     any    `json:"to,omitempty"`
+	Port       string `json:"port"`
+	Field      string `json:"field"`
+	Change     string `json:"change"`
+	Constraint string `json:"constraint,omitempty"`
+	Type       any    `json:"type,omitempty"`
+	From       any    `json:"from,omitempty"`
+	To         any    `json:"to,omitempty"`
 }
+
+// New cross-language change values: became_required, became_optional,
+// constraint_changed, and port_removed.
+var constraints = []string{"enum", "const", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "additionalProperties"}
 
 type ValueChange struct {
 	Step  string `json:"step,omitempty"`
@@ -105,10 +110,84 @@ func fieldTypes(schema any, prefix string) map[string]any {
 				result[key] = value
 			}
 		} else {
-			result[path] = fieldSchema["type"]
+			result[path] = fieldSchema
 		}
 	}
 	return result
+}
+
+func requiredField(portSchema any, field string) bool {
+	required, ok := object(portSchema)["required"].([]any)
+	if !ok {
+		return false
+	}
+	top := strings.SplitN(field, ".", 2)[0]
+	for _, value := range required {
+		if value == top {
+			return true
+		}
+	}
+	return false
+}
+
+func enumContains(values any, target any) bool {
+	items, ok := values.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if reflect.DeepEqual(item, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func number(value any) (float64, bool) {
+	switch value := value.(type) {
+	case int:
+		return float64(value), true
+	case float64:
+		return value, true
+	case json.Number:
+		parsed, err := value.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func constraintTightened(name string, old any, oldExists bool, new any, newExists bool) bool {
+	if !newExists {
+		return false
+	}
+	if !oldExists {
+		return name != "additionalProperties" || !reflect.DeepEqual(new, true)
+	}
+	if name == "enum" {
+		if values, ok := old.([]any); ok {
+			for _, value := range values {
+				if !enumContains(new, value) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	oldNumber, oldIsNumber := number(old)
+	newNumber, newIsNumber := number(new)
+	if oldIsNumber && newIsNumber {
+		if name == "minimum" || name == "exclusiveMinimum" {
+			return newNumber > oldNumber
+		}
+		if name == "maximum" || name == "exclusiveMaximum" {
+			return newNumber < oldNumber
+		}
+	}
+	if name == "additionalProperties" {
+		return !reflect.DeepEqual(old, false) && !reflect.DeepEqual(new, true)
+	}
+	return !reflect.DeepEqual(old, new)
 }
 
 func requiredAddition(portSchema any, field string) bool {
@@ -132,28 +211,65 @@ func schemaDiff(old, new map[string]any) ([]SchemaChange, *string) {
 	changes := []SchemaChange{}
 	var reason *string
 	for _, port := range sortedUnion(oldPorts, newPorts) {
+		if _, exists := newPorts[port]; !exists {
+			changes = append(changes, SchemaChange{Port: port, Field: "", Change: "port_removed"})
+			if reason == nil {
+				value := fmt.Sprintf("output port '%s' was removed", port)
+				reason = &value
+			}
+			continue
+		}
 		oldFields, newFields := fieldTypes(oldPorts[port], ""), fieldTypes(newPorts[port], "")
 		for _, field := range sortedUnion(oldFields, newFields) {
 			oldType, inOld := oldFields[field]
 			newType, inNew := newFields[field]
 			switch {
 			case !inOld:
-				changes = append(changes, SchemaChange{Port: port, Field: field, Change: "added", Type: newType})
+				changes = append(changes, SchemaChange{Port: port, Field: field, Change: "added", Type: object(newType)["type"]})
 				if _, portExisted := oldPorts[port]; portExisted && requiredAddition(newPorts[port], field) && reason == nil {
 					value := fmt.Sprintf("output port '%s' gained a required field", port)
 					reason = &value
 				}
 			case !inNew:
-				changes = append(changes, SchemaChange{Port: port, Field: field, Change: "removed", Type: oldType})
+				changes = append(changes, SchemaChange{Port: port, Field: field, Change: "removed", Type: object(oldType)["type"]})
 				if reason == nil {
 					value := fmt.Sprintf("output port '%s' lost field '%s'", port, field)
 					reason = &value
 				}
-			case !reflect.DeepEqual(oldType, newType):
-				changes = append(changes, SchemaChange{Port: port, Field: field, Change: "type_changed", From: oldType, To: newType})
-				if reason == nil {
-					value := fmt.Sprintf("output port '%s' field '%s' changed type", port, field)
-					reason = &value
+			default:
+				oldField, newField := object(oldType), object(newType)
+				if !reflect.DeepEqual(oldField["type"], newField["type"]) {
+					changes = append(changes, SchemaChange{Port: port, Field: field, Change: "type_changed", From: oldField["type"], To: newField["type"]})
+					if reason == nil {
+						value := fmt.Sprintf("output port '%s' field '%s' changed type", port, field)
+						reason = &value
+					}
+				}
+				oldRequired, newRequired := requiredField(oldPorts[port], field), requiredField(newPorts[port], field)
+				if oldRequired != newRequired {
+					// Whole-field change values shared with Python: became_required/became_optional.
+					change := "became_optional"
+					if newRequired {
+						change = "became_required"
+					}
+					changes = append(changes, SchemaChange{Port: port, Field: field, Change: change, From: oldRequired, To: newRequired})
+					if newRequired && reason == nil {
+						value := fmt.Sprintf("output port '%s' field '%s' became required", port, field)
+						reason = &value
+					}
+				}
+				for _, constraint := range constraints {
+					before, beforeExists := oldField[constraint]
+					after, afterExists := newField[constraint]
+					if beforeExists == afterExists && reflect.DeepEqual(before, after) {
+						continue
+					}
+					// Field-constraint changes use constraint_changed in both implementations.
+					changes = append(changes, SchemaChange{Port: port, Field: field, Change: "constraint_changed", Constraint: constraint, From: before, To: after})
+					if constraintTightened(constraint, before, beforeExists, after, afterExists) && reason == nil {
+						value := fmt.Sprintf("output port '%s' field '%s' constraint '%s' tightened", port, field, constraint)
+						reason = &value
+					}
 				}
 			}
 		}

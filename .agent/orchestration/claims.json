@@ -19,9 +19,9 @@
     "milestone": "0c",
     "owner": "codex",
     "status": "done",
-    "startedAt": "2026-09-16T23:01:11.280Z",
-    "endedAt": "2026-09-16T23:09:53.141Z",
-    "note": "codex exec succeeded"
+    "startedAt": "2026-09-17T15:22:51.058Z",
+    "endedAt": "2026-09-17T15:30:07.651Z",
+    "note": ""
   },
   "1a": {
     "milestone": "1a",
@@ -62,5 +62,21 @@
     "startedAt": "2026-09-17T00:36:20.579Z",
     "endedAt": "2026-09-17T00:42:53.732Z",
     "note": "4 findings confirmed, logged in CHANGELOG.md, fixes deferred to next session"
+  },
+  "1c-fix-pagination-host": {
+    "milestone": "1c-fix-pagination-host",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:22:30.618Z",
+    "endedAt": "2026-09-17T15:26:39.270Z",
+    "note": "codex exec succeeded"
+  },
+  "0c-fix-diff-requiredness": {
+    "milestone": "0c-fix-diff-requiredness",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:22:37.762Z",
+    "endedAt": "2026-09-17T15:30:43.466Z",
+    "note": "codex exec succeeded"
   }
 }

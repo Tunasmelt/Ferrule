@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,5 +58,94 @@ func TestDiffClassifiesRequiredAndOptionalAdditions(t *testing.T) {
 	}
 	if optional.Breaking || optional.BreakingReason != nil {
 		t.Fatalf("unexpected optional addition result: %#v", optional)
+	}
+}
+
+func schemaResult(t *testing.T, oldPort, newPort map[string]any) DiffResult {
+	t.Helper()
+	result, err := Diff(
+		map[string]any{"output_schema": map[string]any{"ports": map[string]any{"ok": oldPort}}},
+		map[string]any{"output_schema": map[string]any{"ports": map[string]any{"ok": newPort}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestDiffExistingFieldBecomingRequiredIsBreaking(t *testing.T) {
+	oldPort := map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"type": "string"}}}
+	newPort := map[string]any{"type": "object", "properties": oldPort["properties"], "required": []any{"status"}}
+
+	result := schemaResult(t, oldPort, newPort)
+
+	want := []SchemaChange{{Port: "ok", Field: "status", Change: "became_required", From: false, To: true}}
+	if !reflect.DeepEqual(result.SchemaChanges, want) || !result.Breaking {
+		t.Fatalf("unexpected requiredness result: %#v", result)
+	}
+}
+
+func TestDiffNewOrNarrowedConstraintsAreBreaking(t *testing.T) {
+	cases := []struct {
+		name      string
+		before    any
+		after     any
+		fieldType string
+		hasBefore bool
+	}{
+		{"enum", []any{"ready", "done"}, []any{"ready"}, "string", true},
+		{"const", nil, "ready", "string", false},
+		{"pattern", nil, "^[a-z]+$", "string", false},
+		{"minimum", 0, 1, "number", true},
+		{"maximum", 10, 9, "number", true},
+		{"exclusiveMinimum", 0, 1, "number", true},
+		{"exclusiveMaximum", 10, 9, "number", true},
+		{"additionalProperties", true, false, "object", true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			oldField := map[string]any{"type": test.fieldType}
+			if test.hasBefore {
+				oldField[test.name] = test.before
+			}
+			newField := map[string]any{"type": test.fieldType, test.name: test.after}
+			result := schemaResult(t,
+				map[string]any{"type": "object", "properties": map[string]any{"status": oldField}},
+				map[string]any{"type": "object", "properties": map[string]any{"status": newField}},
+			)
+			before, after := test.before, test.after
+			if _, ok := before.(int); ok {
+				before = json.Number(fmt.Sprint(before))
+				after = json.Number(fmt.Sprint(after))
+			}
+			want := []SchemaChange{{Port: "ok", Field: "status", Change: "constraint_changed", Constraint: test.name, From: before, To: after}}
+			if !reflect.DeepEqual(result.SchemaChanges, want) || !result.Breaking {
+				t.Fatalf("unexpected constraint result: %#v", result)
+			}
+		})
+	}
+}
+
+func TestDiffEmptyPortRemovalIsBreaking(t *testing.T) {
+	result, err := Diff(
+		map[string]any{"output_schema": map[string]any{"ports": map[string]any{"ok": map[string]any{"type": "object"}}}},
+		map[string]any{"output_schema": map[string]any{"ports": map[string]any{}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SchemaChange{{Port: "ok", Field: "", Change: "port_removed"}}
+	if !reflect.DeepEqual(result.SchemaChanges, want) || !result.Breaking {
+		t.Fatalf("unexpected port removal result: %#v", result)
+	}
+}
+
+func TestDiffEnumWideningIsVisibleButNotBreaking(t *testing.T) {
+	result := schemaResult(t,
+		map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"type": "string", "enum": []any{"ready"}}}},
+		map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"type": "string", "enum": []any{"ready", "done"}}}},
+	)
+	if len(result.SchemaChanges) != 1 || result.SchemaChanges[0].Change != "constraint_changed" || result.Breaking {
+		t.Fatalf("unexpected enum widening result: %#v", result)
 	}
 }
