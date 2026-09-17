@@ -805,6 +805,16 @@ Test criteria
       (real numbers from repeated runs, not a single cherry-picked one),
       comfortably under the 25 ms bar; expected to be this low since
       everything is loopback/in-process with no real network hop.
+      **Fixed 2026-09-18, flagged by `/code-review`**: this is a real
+      wall-clock assertion, flaky on a loaded/shared machine through no
+      fault of the proxy code — and since `gate-2a`/`gate-2b`/`gate-2c`
+      all run the same unfiltered `go test ./services/proxy/...` (no
+      per-milestone test binary split), it was silently running under all
+      three, meaning timing noise could fail an unrelated milestone's
+      gate. Changed the test to skip by default, opting in only via
+      `FERRULE_LATENCY_BENCHMARK=1`, which only `gate-2d` sets — confirmed
+      it now shows `SKIP` (0.00s) under `gate-2a`/`2b`/`2c` and runs for
+      real only under `gate-2d`.
 
 Gate `make gate-2d` / `make security` — **passing** (verified 2026-09-18,
 independently re-run repeatedly). Built by Codex via `codex-task.mjs` in

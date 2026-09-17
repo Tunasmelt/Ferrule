@@ -4,14 +4,23 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"testing"
 	"time"
 )
 
+// This is a real wall-clock timing assertion, not a determinism check --
+// flaky on a loaded or shared machine through no fault of the proxy code
+// (GC pauses, scheduler contention, a busy CI runner). gate-2a, gate-2b,
+// and gate-2c all run the unfiltered `go test ./services/proxy/...` (there
+// is no per-milestone test binary split), so if this ran by default it
+// would silently make an unrelated milestone's gate fail on timing noise.
+// Opt-in via FERRULE_LATENCY_BENCHMARK, set only by gate-2d, keeps this
+// contained to the one gate that's actually about latency.
 func TestProxyLatencyP95Under50RPS(t *testing.T) {
-	if testing.Short() {
-		t.Skip("latency assertions are unreliable when the short test suite is requested")
+	if os.Getenv("FERRULE_LATENCY_BENCHMARK") == "" {
+		t.Skip("set FERRULE_LATENCY_BENCHMARK=1 to run this timing-sensitive benchmark (see gate-2d)")
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

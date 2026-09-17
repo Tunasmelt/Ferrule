@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Latency test isolated from unrelated gates (2026-09-18)
+
+`/code-review` flagged: `TestProxyLatencyP95Under50RPS` is a real
+wall-clock assertion (flaky on a loaded/shared machine through no fault
+of the proxy code), and since `gate-2a`/`gate-2b`/`gate-2c` all run the
+same unfiltered `go test ./services/proxy/...` (there's no per-milestone
+test binary split), it was silently running -- and could fail -- under
+all three, not just `gate-2d`. Fixed: the test now skips by default,
+opting in only via `FERRULE_LATENCY_BENCHMARK=1`, set only by `gate-2d`.
+Confirmed via `-v`: `SKIP` (0.00s) under a plain `go test`, runs for real
+under `gate-2d`. `go vet`, `gofmt`, full `go test ./...`, `make check`,
+`make conform` all still green.
+
 ### Phase 2 milestone 2d — Adversarial verification suite (2026-09-18)
 
 **Phase 2 is now fully closed.** Built by Codex via `codex-task.mjs` in

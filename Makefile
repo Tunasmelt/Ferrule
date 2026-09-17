@@ -47,7 +47,7 @@ gate-2c:
 	go test ./services/proxy/...
 
 gate-2d:
-	go test ./services/proxy/... -run 'PermissionProbes|ProxyLatency' -v
+	FERRULE_LATENCY_BENCHMARK=1 go test ./services/proxy/... -run 'PermissionProbes|ProxyLatency' -v
 
 # PHASES.md's phase-level gate: the union of that phase's milestone gates,
 # plus make security (also required, but tracked as its own invocation per
