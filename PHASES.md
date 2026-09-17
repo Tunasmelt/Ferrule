@@ -518,7 +518,56 @@ test. (2) a JSON-decode failure on the independently-rendered request was
 mislabeled with security-event code `undeclared_host` instead of its own
 code, which would have miscounted an internal rendering fault as a
 host-authorization violation in later drift/alerting; given its own code
-`invalid_rendered_request`.
+`invalid_rendered_request`. A `staticcheck` SA6005 finding
+(`strings.ToLower(a) == strings.ToLower(b)` instead of `strings.EqualFold`)
+in the same host-comparison function was fixed the same way.
+
+**Dedicated audit pass (2026-09-18), post-close — 2 more findings fixed,
+2 recorded as tracked follow-ups:** Claude Code did an independent read
+pass, then dispatched Codex for a second independent read-only pass with
+no visibility into the first pass's findings; both converged on the same
+two real issues.
+- **Fixed (Medium):** `Forward` took a `Decision` *and* a separate
+  `AuthorizationRequest` parameter with nothing tying them together — a
+  caller could authorize step A, then call `Forward` with step A's
+  `Decision` alongside step B's `AuthorizationRequest`, sending A's
+  request while attributing any `SecurityEvent` to B's identifiers. Not
+  presently reachable (no orchestrator/caller exists yet), but a real gap
+  in the API contract the next milestone would build on. Fixed by moving
+  `NodeVersionHash`/`RunID`/`StepSeq`/`StepID` onto `Decision` itself
+  (populated by `Authorize`) and dropping `Forward`'s second parameter
+  entirely — there is no longer a second identity value that could
+  disagree with the `Decision`.
+- **Fixed (Low):** `TestAuthorizeAcceptsBarePlanDocumentShape` was named
+  as an acceptance test but submitted a stub request that fails the
+  milestone-2b byte comparison and asserted only `decision.StepFound` —
+  misleading coverage (it never proved full authorization succeeds
+  against the bare-plan shape). Renamed to
+  `TestFindStepAcceptsBarePlanDocumentShape` with a comment pointing to
+  `TestAuthorizeAcceptsMatchingRequest`, which already covers full
+  acceptance of this same shape.
+- **Tracked, not fixed here (Medium correctness / Low current security
+  impact):** `packages/plan-schema`'s JSON Schema has no uniqueness
+  constraint on step `id`, and the Python checker doesn't add one either
+  — a schema-valid plan can have two steps sharing an `id`. `findStep`
+  returns the first match, so the second occurrence can never be
+  authorized (fails the byte comparison against the wrong step's
+  rendering) — this fails closed, not open, so it is not an authorization
+  bypass today. This is a milestone 1a gap, not a 2b one; fixing it means
+  adding a duplicate-`id` check to `packages/plan-schema`'s checker
+  (the same shape as 0a's existing duplicate-object-key rejection), which
+  was left for a separate, explicitly scoped follow-up rather than
+  reopening a closed phase inside this audit.
+- **Tracked, not fixed here (Medium for whichever milestone adds a real
+  transport; no current exploit):** `Forward`'s response-size check
+  compares `len(response.Body)` only after `Transport` has already
+  returned a fully-buffered body — correct against the mock transports
+  used today, but a real `net/http`-backed transport would need to enforce
+  the limit *while reading*, not after, or an oversized response becomes
+  a memory/bandwidth exhaustion vector before the denial ever fires. Note
+  left here for whichever milestone builds the real transport (2c or
+  later) rather than invented against a transport that doesn't exist yet.
+
 Exit when: comparison/host/redirect/budget/size/content-type denial tests
 pass and the injection probe holds. — met.
 

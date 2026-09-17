@@ -182,5 +182,13 @@
     "startedAt": "2026-09-17T20:50:09.891Z",
     "endedAt": "2026-09-17T20:54:14.463Z",
     "note": "codex exec succeeded"
+  },
+  "phase2b-audit": {
+    "milestone": "phase2b-audit",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T21:36:42.224Z",
+    "endedAt": "2026-09-17T21:42:38.815Z",
+    "note": "codex exec succeeded"
   }
 }

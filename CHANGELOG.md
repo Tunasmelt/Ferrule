@@ -7,6 +7,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 2b dedicated audit (2026-09-18) — 2 fixed, 2 tracked
+
+Claude Code independent read pass, then a second independent read-only
+Codex pass with no visibility into the first pass's findings; both
+converged on the same two real issues.
+
+**Medium — FIXED**
+- ~~`Forward` took a `Decision` and a separate `AuthorizationRequest`
+  parameter with nothing tying them together~~ -- a caller could
+  authorize step A and then call `Forward` with A's `Decision` paired
+  with step B's `AuthorizationRequest`, sending A's rendered request
+  while attributing any `SecurityEvent` to B's identifiers. Not presently
+  reachable (no orchestrator/caller exists yet to misuse it this way),
+  but a real gap in the API contract the next milestone would otherwise
+  build on. Fixed by moving `NodeVersionHash`/`RunID`/`StepSeq`/`StepID`
+  onto `Decision` itself (populated once, by `Authorize`) and dropping
+  `Forward`'s second parameter -- there is no longer a second identity
+  value that could disagree with the `Decision`. Updated all call sites
+  in `authorize.go`, `forward.go`, and `forward_test.go`.
+
+**Low — FIXED**
+- ~~`TestAuthorizeAcceptsBarePlanDocumentShape` submitted a stub request
+  that fails the byte comparison and asserted only `StepFound`~~ --
+  misleading coverage: the name implied full acceptance but it never
+  proved that. Renamed to `TestFindStepAcceptsBarePlanDocumentShape`,
+  with a comment pointing at `TestAuthorizeAcceptsMatchingRequest` (same
+  bare-plan shape, already proves full acceptance).
+
+**Tracked as follow-ups, not fixed in this audit:**
+- Medium correctness / Low current security impact: `packages/plan-schema`
+  has no uniqueness constraint on step `id` (neither the JSON Schema nor
+  the Python checker), so a schema-valid plan can have two steps sharing
+  an `id`; `findStep` always returns the first match, so the second
+  occurrence can never be authorized (fails closed, not a bypass). This
+  is a milestone 1a gap -- fixing it means adding a duplicate-`id` check
+  to the checker (same shape as 0a's existing duplicate-object-key
+  rejection) as its own scoped follow-up, not a change bundled into this
+  audit.
+- Medium for whichever milestone adds a real transport, no current
+  exploit: `Forward`'s response-size check only compares length after a
+  `Transport` has already returned a fully-buffered body. Fine against
+  today's mock transports; a real `net/http`-backed transport will need
+  to enforce the limit while reading, not after, or an oversized response
+  becomes a memory/bandwidth exhaustion vector before the denial fires.
+
+Re-verified against a fresh `gate-2b`, `gate-2a`, `make check`, `make
+conform` -- all green, no regressions.
+
 ### Phase 2 milestone 2b — Request comparison and denial paths (2026-09-18)
 
 Built by Codex via `codex-task.mjs` in two bounded dispatches, each

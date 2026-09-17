@@ -7,15 +7,15 @@ import (
 	"testing"
 )
 
+// authorizedDecision fabricates a Decision the way a real one would look
+// after Authorize succeeds, carrying the same identity fields Forward now
+// reads instead of a second, separately-suppliable AuthorizationRequest.
 func authorizedDecision(rawURL string) Decision {
 	return Decision{
+		NodeVersionHash: "sha256:node", RunID: "run-1", StepSeq: 2, StepID: "send",
 		ChecksPassed:    true,
 		RenderedRequest: []byte(fmt.Sprintf(`{"method":"POST","url":%q,"headers":{"X-Test":"yes"},"body":{"value":"{{ secret.KEY }}"}}`, rawURL)),
 	}
-}
-
-func forwardingContext() AuthorizationRequest {
-	return AuthorizationRequest{NodeVersionHash: "sha256:node", RunID: "run-1", StepSeq: 2, StepID: "send"}
 }
 
 func TestForwardFollowsSameHostRedirect(t *testing.T) {
@@ -28,7 +28,7 @@ func TestForwardFollowsSameHostRedirect(t *testing.T) {
 		return OutboundResponse{Status: 200, Headers: map[string]string{"Content-Type": "application/json"}}, nil
 	}
 
-	response, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{
+	response, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{
 		MaxRedirects: 1, MaxResponseBytes: 100, AllowedContentTypes: []string{"application/json"},
 	}, transport)
 	if err != nil || event != nil || response.Status != 200 {
@@ -49,7 +49,7 @@ func TestForwardDeniesCrossHostRedirectWithoutFetchingTarget(t *testing.T) {
 		return OutboundResponse{Status: 302, Headers: map[string]string{"location": "https://evil.example/admin"}}, nil
 	}
 
-	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{MaxRedirects: 3}, transport)
+	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxRedirects: 3}, transport)
 	if err != nil || event == nil || event.Code != "cross_host_redirect" {
 		t.Fatalf("Forward() event = %+v, err = %v; want cross_host_redirect", event, err)
 	}
@@ -73,7 +73,7 @@ func TestForwardDeniesSchemeDowngradeRedirect(t *testing.T) {
 		return OutboundResponse{Status: 302, Headers: map[string]string{"Location": "http://api.example.com/downgraded"}}, nil
 	}
 
-	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{MaxRedirects: 3}, transport)
+	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxRedirects: 3}, transport)
 	if err != nil || event == nil || event.Code != "cross_host_redirect" {
 		t.Fatalf("Forward() event = %+v, err = %v; want cross_host_redirect for a scheme downgrade", event, err)
 	}
@@ -93,7 +93,7 @@ func TestForwardRedirectBudget(t *testing.T) {
 			return OutboundResponse{Status: 200}, nil
 		}
 
-		response, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{MaxRedirects: 3, MaxResponseBytes: 10}, transport)
+		response, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxRedirects: 3, MaxResponseBytes: 10}, transport)
 		if err != nil || event != nil || response.Status != 200 || calls != 4 {
 			t.Fatalf("Forward() = (%+v, %+v, %v), calls = %d; want success after 4 calls", response, event, err, calls)
 		}
@@ -106,7 +106,7 @@ func TestForwardRedirectBudget(t *testing.T) {
 			return OutboundResponse{Status: 302, Headers: map[string]string{"Location": fmt.Sprintf("/hop/%d", calls)}}, nil
 		}
 
-		_, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{MaxRedirects: 3}, transport)
+		_, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxRedirects: 3}, transport)
 		if err != nil || event == nil || event.Code != "request_budget_exceeded" {
 			t.Fatalf("Forward() event = %+v, err = %v; want request_budget_exceeded", event, err)
 		}
@@ -121,7 +121,7 @@ func TestForwardDeniesOversizedResponse(t *testing.T) {
 		return OutboundResponse{Status: 200, Body: []byte("12345")}, nil
 	}
 
-	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{MaxResponseBytes: 4}, transport)
+	_, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxResponseBytes: 4}, transport)
 	if err != nil || event == nil || event.Code != "response_too_large" {
 		t.Fatalf("Forward() event = %+v, err = %v; want response_too_large", event, err)
 	}
@@ -141,7 +141,7 @@ func TestForwardContentTypeAllowlist(t *testing.T) {
 				return OutboundResponse{Status: 200, Headers: map[string]string{"content-type": test.contentType}}, nil
 			}
 
-			_, event, err := Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), ForwardPolicy{
+			_, event, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{
 				MaxResponseBytes: 100, AllowedContentTypes: []string{"application/json"},
 			}, transport)
 			if err != nil {
@@ -163,7 +163,7 @@ func TestForwardIgnoresResponseBodyInstructions(t *testing.T) {
 	policy := ForwardPolicy{MaxResponseBytes: len(probe), AllowedContentTypes: []string{"application/json"}}
 
 	run := func(body []byte) (OutboundResponse, *SecurityEvent, error) {
-		return Forward(authorizedDecision("https://api.example.com/start"), forwardingContext(), policy, func(request OutboundRequest) (OutboundResponse, error) {
+		return Forward(authorizedDecision("https://api.example.com/start"), policy, func(request OutboundRequest) (OutboundResponse, error) {
 			return OutboundResponse{Status: 200, Headers: map[string]string{"Content-Type": "application/json"}, Body: body}, nil
 		})
 	}

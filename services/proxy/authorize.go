@@ -20,6 +20,17 @@ type AuthorizationRequest struct {
 }
 
 type Decision struct {
+	// Identity fields, copied from the AuthorizationRequest that produced
+	// this Decision. Forward() reads these instead of taking a second,
+	// separately-suppliable AuthorizationRequest parameter -- a caller
+	// cannot authorize step A and then forward it while attributing
+	// SecurityEvents to step B's identifiers, because there is no second
+	// parameter left to disagree with the Decision.
+	NodeVersionHash string
+	RunID           string
+	StepSeq         int
+	StepID          string
+
 	ChecksPassed     bool
 	ArtifactFound    bool
 	StepFound        bool
@@ -32,7 +43,13 @@ type Decision struct {
 }
 
 func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRequest) Decision {
-	decision := Decision{SubmittedRequest: append(json.RawMessage(nil), request.CanonicalizedRequest...)}
+	decision := Decision{
+		NodeVersionHash:  request.NodeVersionHash,
+		RunID:            request.RunID,
+		StepSeq:          request.StepSeq,
+		StepID:           request.StepID,
+		SubmittedRequest: append(json.RawMessage(nil), request.CanonicalizedRequest...),
+	}
 	manifest, ok := cache.Get(request.NodeVersionHash)
 	if !ok {
 		decision.Reason = "artifact not found"
@@ -83,28 +100,28 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 	// consumer (drift/alerting, later phases) doesn't miscount an internal
 	// rendering fault as a host-authorization violation.
 	if unmarshalErr := json.Unmarshal(rendered, &renderedRequest); unmarshalErr != nil {
-		return deny(decision, request, "invalid_rendered_request", "rendered request is not valid JSON: "+unmarshalErr.Error())
+		return deny(decision, "invalid_rendered_request", "rendered request is not valid JSON: "+unmarshalErr.Error())
 	}
 	host := ""
 	if parsedURL, parseErr := url.Parse(renderedRequest.URL); parseErr == nil {
 		host = parsedURL.Hostname()
 	}
 	if host == "" || !hostDeclared(manifest, host) {
-		return deny(decision, request, "undeclared_host", fmt.Sprintf("rendered request host %q is not declared in plan hosts", host))
+		return deny(decision, "undeclared_host", fmt.Sprintf("rendered request host %q is not declared in plan hosts", host))
 	}
 	if !bytes.Equal(decision.RenderedRequest, decision.SubmittedRequest) {
-		return deny(decision, request, "request_mismatch", requestMismatchReason(rendered, decision.SubmittedRequest))
+		return deny(decision, "request_mismatch", requestMismatchReason(rendered, decision.SubmittedRequest))
 	}
 	decision.ChecksPassed = true
 	return decision
 }
 
-func deny(decision Decision, request AuthorizationRequest, code, reason string) Decision {
+func deny(decision Decision, code, reason string) Decision {
 	decision.Reason = reason
 	decision.SecurityEvent = &SecurityEvent{
 		Code: code, Reason: reason,
-		NodeVersionHash: request.NodeVersionHash, RunID: request.RunID,
-		StepSeq: request.StepSeq, StepID: request.StepID,
+		NodeVersionHash: decision.NodeVersionHash, RunID: decision.RunID,
+		StepSeq: decision.StepSeq, StepID: decision.StepID,
 	}
 	return decision
 }

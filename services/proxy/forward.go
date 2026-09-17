@@ -34,8 +34,13 @@ type ForwardPolicy struct {
 }
 
 // Forward sends an independently rendered, already-authorized request and
-// enforces redirect and response bounds without inspecting response body text.
-func Forward(decision Decision, request AuthorizationRequest, policy ForwardPolicy, transport Transport) (OutboundResponse, *SecurityEvent, error) {
+// enforces redirect and response bounds without inspecting response body
+// text. It takes the Decision returned by Authorize -- not a second,
+// separately-suppliable AuthorizationRequest -- so a caller cannot forward
+// step A's rendered request while attributing SecurityEvents to step B's
+// identifiers; there is no second identity parameter left to disagree with
+// the Decision.
+func Forward(decision Decision, policy ForwardPolicy, transport Transport) (OutboundResponse, *SecurityEvent, error) {
 	if !decision.ChecksPassed {
 		return OutboundResponse{}, nil, errors.New("cannot forward an unauthorized request")
 	}
@@ -78,10 +83,10 @@ func Forward(decision Decision, request AuthorizationRequest, policy ForwardPoli
 			// comparison already lives, is cheaper than remembering to
 			// special-case it once secrets exist.
 			if !strings.EqualFold(target.Scheme, originalURL.Scheme) || !strings.EqualFold(target.Host, originalURL.Host) {
-				return forwardDenied(request, "cross_host_redirect", fmt.Sprintf("redirect target origin %q differs from authorized origin %q", target.Scheme+"://"+target.Host, originalURL.Scheme+"://"+originalURL.Host))
+				return forwardDenied(decision, "cross_host_redirect", fmt.Sprintf("redirect target origin %q differs from authorized origin %q", target.Scheme+"://"+target.Host, originalURL.Scheme+"://"+originalURL.Host))
 			}
 			if redirects >= policy.MaxRedirects {
-				return forwardDenied(request, "request_budget_exceeded", "same-host redirect budget exceeded")
+				return forwardDenied(decision, "request_budget_exceeded", "same-host redirect budget exceeded")
 			}
 			redirects++
 			// Deliberate v1 limitation: redirects preserve the prior method,
@@ -91,10 +96,10 @@ func Forward(decision Decision, request AuthorizationRequest, policy ForwardPoli
 		}
 
 		if len(response.Body) > policy.MaxResponseBytes {
-			return forwardDenied(request, "response_too_large", fmt.Sprintf("response body has %d bytes; limit is %d", len(response.Body), policy.MaxResponseBytes))
+			return forwardDenied(decision, "response_too_large", fmt.Sprintf("response body has %d bytes; limit is %d", len(response.Body), policy.MaxResponseBytes))
 		}
 		if len(policy.AllowedContentTypes) > 0 && !contentTypeAllowed(headerValue(response.Headers, "Content-Type"), policy.AllowedContentTypes) {
-			return forwardDenied(request, "disallowed_content_type", fmt.Sprintf("response content type %q is not allowed", headerValue(response.Headers, "Content-Type")))
+			return forwardDenied(decision, "disallowed_content_type", fmt.Sprintf("response content type %q is not allowed", headerValue(response.Headers, "Content-Type")))
 		}
 		return response, nil, nil
 	}
@@ -136,10 +141,10 @@ func contentTypeAllowed(contentType string, allowed []string) bool {
 	return false
 }
 
-func forwardDenied(request AuthorizationRequest, code, reason string) (OutboundResponse, *SecurityEvent, error) {
+func forwardDenied(decision Decision, code, reason string) (OutboundResponse, *SecurityEvent, error) {
 	return OutboundResponse{}, &SecurityEvent{
 		Code: code, Reason: reason,
-		NodeVersionHash: request.NodeVersionHash, RunID: request.RunID,
-		StepSeq: request.StepSeq, StepID: request.StepID,
+		NodeVersionHash: decision.NodeVersionHash, RunID: decision.RunID,
+		StepSeq: decision.StepSeq, StepID: decision.StepID,
 	}, nil
 }
