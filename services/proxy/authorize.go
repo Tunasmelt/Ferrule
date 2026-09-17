@@ -116,7 +116,7 @@ func hostDeclared(manifest map[string]any, host string) bool {
 	plan := planDocument(manifest)
 	hosts, _ := plan["hosts"].([]any)
 	for _, declared := range hosts {
-		if value, ok := declared.(string); ok && strings.ToLower(value) == strings.ToLower(host) {
+		if value, ok := declared.(string); ok && strings.EqualFold(value, host) {
 			return true
 		}
 	}
