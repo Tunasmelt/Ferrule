@@ -97,7 +97,12 @@ func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, s
 	for {
 		response, err := transport(outbound, policy.MaxResponseBytes)
 		if err != nil {
-			return OutboundResponse{}, nil, err
+			// The transport received the resolved (secret-bearing) outbound
+			// request, and a real HTTP client's error text commonly echoes
+			// the request URL or other details. Redact before returning so
+			// a transport that does this (buggy or malicious) can't hand a
+			// raw credential back to the caller through an error message.
+			return OutboundResponse{}, nil, errors.New(string(Redact([]byte(err.Error()), secretValues)))
 		}
 		location := headerValue(response.Headers, "Location")
 		if response.Status >= 300 && response.Status < 400 && location != "" {
@@ -120,10 +125,10 @@ func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, s
 			// comparison already lives, is cheaper than remembering to
 			// special-case it once secrets exist.
 			if !strings.EqualFold(target.Scheme, originalURL.Scheme) || !strings.EqualFold(target.Host, originalURL.Host) {
-				return forwardDenied(decision, "cross_host_redirect", fmt.Sprintf("redirect target origin %q differs from authorized origin %q", target.Scheme+"://"+target.Host, originalURL.Scheme+"://"+originalURL.Host))
+				return forwardDenied(decision, secretValues, "cross_host_redirect", fmt.Sprintf("redirect target origin %q differs from authorized origin %q", target.Scheme+"://"+target.Host, originalURL.Scheme+"://"+originalURL.Host))
 			}
 			if redirects >= policy.MaxRedirects {
-				return forwardDenied(decision, "request_budget_exceeded", "same-host redirect budget exceeded")
+				return forwardDenied(decision, secretValues, "request_budget_exceeded", "same-host redirect budget exceeded")
 			}
 			redirects++
 			// Deliberate v1 limitation: redirects preserve the prior method,
@@ -133,10 +138,10 @@ func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, s
 		}
 
 		if len(response.Body) > policy.MaxResponseBytes {
-			return forwardDenied(decision, "response_too_large", fmt.Sprintf("response body has %d bytes; limit is %d", len(response.Body), policy.MaxResponseBytes))
+			return forwardDenied(decision, secretValues, "response_too_large", fmt.Sprintf("response body has %d bytes; limit is %d", len(response.Body), policy.MaxResponseBytes))
 		}
 		if len(policy.AllowedContentTypes) > 0 && !contentTypeAllowed(headerValue(response.Headers, "Content-Type"), policy.AllowedContentTypes) {
-			return forwardDenied(decision, "disallowed_content_type", fmt.Sprintf("response content type %q is not allowed", headerValue(response.Headers, "Content-Type")))
+			return forwardDenied(decision, secretValues, "disallowed_content_type", fmt.Sprintf("response content type %q is not allowed", headerValue(response.Headers, "Content-Type")))
 		}
 		response.Body = Redact(response.Body, secretValues)
 		for name, value := range response.Headers {
@@ -182,9 +187,16 @@ func contentTypeAllowed(contentType string, allowed []string) bool {
 	return false
 }
 
-func forwardDenied(decision Decision, code, reason string) (OutboundResponse, *SecurityEvent, error) {
+// forwardDenied builds a denial after secrets have already been resolved
+// (every call site in Forward runs after ResolveSecrets). reason is built
+// from response metadata that an upstream fully controls -- a redirect's
+// Location host, a Content-Type header value -- and an upstream that has
+// just received a resolved credential can set either of these to literally
+// echo it back, landing the raw secret in this event's Reason otherwise.
+// Always redact secretValues out of reason before it leaves this function.
+func forwardDenied(decision Decision, secretValues []string, code, reason string) (OutboundResponse, *SecurityEvent, error) {
 	return OutboundResponse{}, &SecurityEvent{
-		Code: code, Reason: reason,
+		Code: code, Reason: string(Redact([]byte(reason), secretValues)),
 		NodeVersionHash: decision.NodeVersionHash, RunID: decision.RunID,
 		StepSeq: decision.StepSeq, StepID: decision.StepID,
 	}, nil

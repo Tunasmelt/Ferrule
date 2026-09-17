@@ -685,6 +685,74 @@ would fail outright. Fixed by reusing `render.go`'s own
 else in this package) instead of `strconv.Quote`. Added
 `TestResolveSecretsEscapesControlByteAsValidJSON` as a permanent
 regression test.
+
+**Dedicated audit pass (2026-09-18), post-close — 4 more findings, 3
+fixed, 1 tracked:** requested a dedicated 2c audit given it's the first
+code in this project to ever hold a real secret value. Claude Code did
+an independent pass first, then dispatched Codex for a second,
+independent, read-only pass with no visibility into the first pass's
+findings.
+- **Fixed (Medium, found by Claude Code):** `CredentialStore` had no
+  `String()`/`GoString()` method. Go's `fmt` package prints unexported
+  fields under `%v`/`%+v`/`%#v` via reflection, ignoring normal field
+  visibility -- reproduced directly: `fmt.Sprintf("%+v", store)` dumped
+  every stored credential verbatim. An accidental debug/log call on a
+  `*CredentialStore` anywhere, now or in the future, would have leaked
+  every secret it held. Fixed by adding both methods, returning only a
+  count. `TestCredentialStoreFormattingDoesNotLeakValues` added.
+- **Fixed (High, found independently by both passes, Codex reproduced
+  it first and concretely):** `Redact` only matched a secret's exact raw
+  bytes. An upstream echoing a credential back inside its own JSON
+  response re-escapes characters like a literal quote (`"` → `\"`), and
+  the raw-value search never matches the escaped substring — reproduced
+  directly: a credential containing a `"` survived redaction in a
+  simulated JSON error-echo response. Threat model: a malicious or even
+  merely diagnostic-happy upstream that has just received a resolved
+  credential can trivially cause this by reflecting it in a structured
+  error body. Fixed with a bounded, deliberately partial mitigation (URL
+  encoding, base64, and other transformations remain unbounded and are
+  not chased): `Redact` now also searches for each secret's
+  JSON-string-escaped form, built with the same `writePythonString`
+  escaper `ResolveSecrets` uses to embed values into JSON in the first
+  place. New `TestRedact/JSON-escaped_echo` case.
+- **Fixed (High, found by Codex, independently reproduced by Claude
+  Code):** `SecurityEvent.Reason` for the post-resolution denial paths
+  (`cross_host_redirect`, `request_budget_exceeded`, `response_too_large`,
+  `disallowed_content_type`) was built directly from response metadata an
+  upstream fully controls -- a `Content-Type` header value, a redirect's
+  `Location` host -- and was never passed through `Redact`, unlike the
+  success-path response. Reproduced directly and concretely: an upstream
+  setting its `Content-Type` response header to literally be the resolved
+  secret value caused `SecurityEvent.Reason` to contain the raw secret,
+  verbatim, in a value returned to the caller — while the disallowed
+  content type also happened to be the correct fail-safe outcome, the
+  leak in the *event describing* that outcome is exactly what invariant 1
+  exists to prevent. A related, lower-likelihood path (Medium, also
+  fixed): a transport implementation that formats request details into
+  its returned `error` (common in real HTTP client libraries) would have
+  had that error passed back verbatim. Fixed both: `forwardDenied` now
+  redacts `reason` before constructing the `SecurityEvent`, and a
+  transport error's text is redacted before `Forward` returns it.
+  `TestForwardRedactsSecretFromDenialReason` and
+  `TestForwardRedactsSecretFromTransportError` added.
+- **Tracked, not fixed here (Medium today, would become High if exposed
+  without change):** `Forward` trusts only the exported
+  `decision.ChecksPassed` boolean, with nothing structurally tying a
+  `Decision` to a real `Authorize()` call — a caller can construct
+  `Decision{ChecksPassed: true, RenderedRequest: "...{{ secret.X }}..."}`
+  directly and obtain full secret resolution and forwarding with no
+  artifact lookup, journal check, host check, or byte comparison ever
+  having run. This is the same API-coupling class fixed for
+  `Forward`/`AuthorizationRequest` in milestone 2b's audit, reintroduced
+  in a stronger form now that secrets are involved. Not fixed here
+  because there is still no real orchestrator or network-facing caller —
+  fixing it well means deciding how `Authorize` and `Forward` get bound
+  together (a single combined entry point? an unforgeable capability
+  token?), which milestone 2d's black-box permission-probe suite will
+  have to answer anyway once it needs "a running proxy instance" to test
+  against. Explicitly flagged as a prerequisite question for 2d, not
+  deferred indefinitely.
+
 Exit when: secret resolution, deletion failure class, and redaction tests
 pass. — met.
 

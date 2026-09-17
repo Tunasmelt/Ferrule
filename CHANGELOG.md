@@ -7,6 +7,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 2c dedicated audit (2026-09-18) — 3 fixed, 1 tracked
+
+Requested given 2c is the first code in this project to hold a real
+secret value. Claude Code independent pass, then a second, independent,
+read-only Codex pass with no visibility into the first pass's findings.
+
+**Medium — FIXED (found by Claude Code)**
+- ~~`CredentialStore` had no `String()`/`GoString()` method~~ — Go's
+  `fmt` prints unexported fields under `%v`/`%+v`/`%#v` via reflection;
+  confirmed `fmt.Sprintf("%+v", store)` dumped every stored credential.
+  Fixed: both methods now return only a count.
+  `TestCredentialStoreFormattingDoesNotLeakValues` added.
+
+**High — FIXED (found by both passes independently; Codex reproduced it
+first, concretely)**
+- ~~`Redact` only matched a secret's exact raw bytes, missing a
+  JSON-string-re-escaped echo~~ (`"` → `\"` when an upstream reflects the
+  credential inside its own JSON response) — reproduced directly. Fixed
+  with a deliberately bounded partial mitigation (URL-encoding, base64,
+  and other transformations remain unbounded and are not chased):
+  `Redact` also searches for each secret's JSON-string-escaped form,
+  using the same escaper `ResolveSecrets` already uses to embed values.
+
+**High — FIXED (found by Codex, independently reproduced by Claude Code)**
+- ~~`SecurityEvent.Reason` for the post-resolution denial paths
+  (cross-host redirect, budget, response-too-large, disallowed
+  content-type) embedded upstream-controlled response metadata without
+  redaction~~ — reproduced directly and concretely: an upstream setting
+  its `Content-Type` header to literally be the resolved secret caused
+  `SecurityEvent.Reason` to contain the raw secret verbatim. Fixed:
+  `forwardDenied` now redacts `reason` before building the event.
+- ~~A transport error was returned verbatim after the transport received
+  the resolved (secret-bearing) request~~ (Medium: real HTTP client
+  errors commonly echo request details) — fixed: the error's text is
+  redacted before `Forward` returns it.
+- `TestForwardRedactsSecretFromDenialReason`,
+  `TestForwardRedactsSecretFromTransportError` added.
+
+**Tracked, not fixed (Medium today, would become High if exposed as-is)**
+- `Forward` trusts only `decision.ChecksPassed`, with nothing
+  structurally tying a `Decision` to a real `Authorize()` call — the same
+  API-coupling class fixed for `Forward`/`AuthorizationRequest` in
+  milestone 2b's audit, now reintroduced around secret resolution
+  specifically. Left tracked because fixing it well means deciding how
+  `Authorize` and `Forward` get bound together, which milestone 2d's
+  black-box permission-probe suite will have to resolve anyway once it
+  needs a real running proxy to test against.
+
+`go vet`, `gofmt`, full `go test ./...`, `gate-2c`, `gate-2b`, `gate-2a`,
+`make check`, `make conform` all re-run green, no regressions.
+
 ### Phase 2 milestone 2c — Credential broker and injection (2026-09-18)
 
 Built by Codex via `codex-task.mjs`: `services/proxy/credentials.go`

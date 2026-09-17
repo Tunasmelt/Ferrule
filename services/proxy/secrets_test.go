@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +95,55 @@ func TestForwardRedactsEchoedSecretFromResponse(t *testing.T) {
 	}
 	if bytes.Contains(response.Body, []byte("super-secret")) || response.Headers["X-Echo"] != "Bearer [REDACTED]" {
 		t.Fatalf("response was not redacted: %+v", response)
+	}
+}
+
+// Regression, found during the 2c audit (independently, by both a self
+// review and a second Codex read-only pass): SecurityEvent.Reason for the
+// post-resolution denial paths (redirect, budget, size, content-type) was
+// built from response metadata an upstream fully controls -- a Content-Type
+// header value, a redirect's Location host -- and was never redacted. An
+// upstream that has just received a resolved credential could set either of
+// those to literally echo it back, landing the raw secret in a
+// caller-visible SecurityEvent even though the response body/headers
+// redaction path never ran (it only runs on the success path).
+func TestForwardRedactsSecretFromDenialReason(t *testing.T) {
+	store := &CredentialStore{}
+	store.Put("broker-1", "super-secret-value")
+	decision := authorizedDecision("https://api.example.com/start")
+	decision.RenderedRequest = []byte(`{"method":"GET","url":"https://api.example.com/start","headers":{"Authorization":"Bearer {{ secret.api_key }}"},"body":null}`)
+
+	_, event, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100, AllowedContentTypes: []string{"application/json"}}, SecretBindings{"api_key": "broker-1"}, store, func(_ OutboundRequest, _ int) (OutboundResponse, error) {
+		return OutboundResponse{Status: 200, Headers: map[string]string{"Content-Type": "super-secret-value"}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event == nil || event.Code != "disallowed_content_type" {
+		t.Fatalf("expected disallowed_content_type denial: %+v", event)
+	}
+	if strings.Contains(event.Reason, "super-secret-value") {
+		t.Fatalf("SecurityEvent.Reason leaked the raw secret: %q", event.Reason)
+	}
+}
+
+// Regression, found the same way: a transport that received the resolved
+// (secret-bearing) request could format request details -- URLs and
+// request/error logging commonly do -- into its returned error, which
+// Forward passed through verbatim.
+func TestForwardRedactsSecretFromTransportError(t *testing.T) {
+	store := &CredentialStore{}
+	store.Put("broker-1", "super-secret-value")
+	decision := authorizedDecision("https://api.example.com/start")
+	decision.RenderedRequest = []byte(`{"method":"GET","url":"https://api.example.com/start","headers":{"Authorization":"Bearer {{ secret.api_key }}"},"body":null}`)
+
+	_, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, SecretBindings{"api_key": "broker-1"}, store, func(request OutboundRequest, _ int) (OutboundResponse, error) {
+		return OutboundResponse{}, fmt.Errorf("request failed: %+v", request)
+	})
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), "super-secret-value") {
+		t.Fatalf("transport error leaked the raw secret: %q", err.Error())
 	}
 }
