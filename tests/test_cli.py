@@ -19,6 +19,7 @@ class CLITests(unittest.TestCase):
                 str(ROOT / "cli"),
                 str(ROOT / "packages" / "artifact" / "python"),
                 str(ROOT / "packages" / "plan-schema" / "python"),
+                str(ROOT / "packages" / "interpreter" / "python"),
             ]
         )
         return subprocess.run(
@@ -102,10 +103,22 @@ class CLITests(unittest.TestCase):
         )
         self.assertEqual(0, accepted.returncode, accepted.stderr)
         self.assertEqual(b"", accepted.stdout)
+        self.assertIn(b'"plan_coverage": "representable"', accepted.stderr)
         self.assertEqual(1, rejected.returncode, rejected.stderr)
         finding = json.loads(rejected.stdout)
         self.assertEqual("UNDECLARED_HOST", finding["code"])
         self.assertIn("path", finding)
+
+    def test_plan_run_mock_accepts_inline_input(self) -> None:
+        fixtures = ROOT / "tests" / "fixtures"
+        result = self.run_cli(
+            "plan", "run-mock",
+            str(fixtures / "plans" / "execution" / "github-repo.json"),
+            "--input", '{"owner":"octo","repo":"demo"}',
+            "--fixtures", str(fixtures / "http.json"),
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("ok", json.loads(result.stdout)["route"])
 
 
 if __name__ == "__main__":

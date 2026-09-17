@@ -1,0 +1,7 @@
+[
+  {"plan":"github-repo","verdict":"representable","limitations":[]},{"plan":"github-issues","verdict":"representable","limitations":[]},{"plan":"github-missing","verdict":"representable","limitations":[]},
+  {"plan":"stripe-customer","verdict":"representable","limitations":[]},{"plan":"stripe-charges","verdict":"representable","limitations":[]},{"plan":"stripe-rate-limit","verdict":"representable","limitations":[]},
+  {"plan":"poke-pokemon","verdict":"representable","limitations":[]},{"plan":"poke-list","verdict":"representable","limitations":[]},{"plan":"poke-missing","verdict":"representable","limitations":[]},
+  {"plan":"json-post","verdict":"representable","limitations":[]},{"plan":"json-user","verdict":"representable","limitations":[]},{"plan":"json-missing","verdict":"representable","limitations":[]},
+  {"plan":"openmeteo-dubai","verdict":"representable","limitations":[]},{"plan":"openmeteo-empty","verdict":"representable","limitations":[]},{"plan":"openmeteo-rate-limit","verdict":"representable","limitations":[]}
+]

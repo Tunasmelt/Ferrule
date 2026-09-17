@@ -14,6 +14,8 @@ from ferrule_artifact import (
     sign,
     verify,
 )
+from ferrule_interpreter import PlanRejected, classify_plan
+from ferrule_interpreter.mock import run_mock
 from ferrule_plan_schema import check
 
 
@@ -51,12 +53,25 @@ def main() -> int:
     plan_commands = plan.add_subparsers(dest="plan_command", required=True)
     plan_check = plan_commands.add_parser("check")
     plan_check.add_argument("file", type=Path)
+    plan_run = plan_commands.add_parser("run-mock")
+    plan_run.add_argument("file", type=Path)
+    plan_run.add_argument("--input", required=True)
+    plan_run.add_argument("--fixtures", required=True, type=Path)
 
     args = parser.parse_args()
     try:
         if args.command == "plan":
             document: object = json.loads(args.file.read_text(encoding="utf-8"))
+            if args.plan_command == "run-mock":
+                input_path = Path(args.input)
+                raw_input = input_path.read_text(encoding="utf-8") if input_path.is_file() else args.input
+                input_value = json.loads(raw_input)
+                if not isinstance(input_value, dict):
+                    raise ValueError("--input must be a JSON object or a file containing one")
+                print(json.dumps(run_mock(document, input_value, args.fixtures), sort_keys=True))
+                return 0
             findings = check(document)
+            print(json.dumps({"plan_coverage": classify_plan(document)}, sort_keys=True), file=sys.stderr)
             for finding in findings:
                 print(json.dumps(vars(finding), sort_keys=True))
             return 1 if findings else 0
@@ -101,7 +116,7 @@ def main() -> int:
                 print("verification failed", file=sys.stderr)
                 return 1
             print("verified")
-    except (CanonicalizationError, OSError, TypeError, ValueError) as error:
+    except (CanonicalizationError, OSError, PlanRejected, TypeError, ValueError) as error:
         parser.error(str(error))
     return 0
 

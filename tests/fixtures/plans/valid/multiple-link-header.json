@@ -19,6 +19,7 @@
       "url": "https://api.example.net/jobs/{{ response.job_id }}/events",
       "headers": {},
       "pagination": "link_header",
+      "max_pages": 5,
       "expect": {
         "200": {"route": "ok", "map": {"events": "response.data"}},
         "default": {"route": "error", "map": {"reason": "response.error"}}

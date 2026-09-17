@@ -1,0 +1,1 @@
+{"hosts":["api.github.com"],"steps":[{"id":"repo","method":"GET","url":"http://api.github.com/repos/{{ input.owner }}/{{ input.repo }}","headers":{},"pagination":"none","expect":{"404":{"route":"not_found","map":{"message":"response.message"}},"default":{"route":"permanent_error","map":{"message":"response.message"}}}}]}

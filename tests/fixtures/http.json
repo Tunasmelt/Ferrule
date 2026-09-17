@@ -1,0 +1,20 @@
+{
+  "GET api.github.com/repos/octo/demo":{"status":200,"body":{"full_name":"octo/demo","stargazers_count":7}},
+  "GET api.github.com/repos/octo/demo/issues?per_page=1":{"status":200,"headers":{"Link":"<http://api.github.com/repos/octo/demo/issues?page=2&per_page=1>; rel=\"next\""},"body":{"data":[{"title":"First"}]}},
+  "GET api.github.com/repos/octo/demo/issues?page=2&per_page=1":{"status":200,"body":{"data":[{"title":"Second"}]}},
+  "GET api.github.com/repos/octo/missing":{"status":404,"body":{"message":"Not Found"}},
+  "GET api.stripe.com/v1/customers/cus_1":{"status":200,"body":{"id":"cus_1","email":"dev@example.com"}},
+  "GET api.stripe.com/v1/charges?limit=1&starting_after=":{"status":200,"body":{"data":[{"id":"ch_1"}],"has_more":true}},
+  "GET api.stripe.com/v1/charges?limit=1&starting_after=ch_1":{"status":200,"body":{"data":[{"id":"ch_2"}],"has_more":false}},
+  "GET api.stripe.com/v1/charges?limit=1&starting_after=bad":{"status":429,"body":{"error":{"message":"Too many requests"}}},
+  "GET pokeapi.co/api/v2/pokemon/25":{"status":200,"body":{"name":"pikachu","height":4}},
+  "GET pokeapi.co/api/v2/pokemon?limit=1&offset=0":{"status":200,"body":{"results":[{"name":"bulbasaur"}],"next":"http://pokeapi.co/api/v2/pokemon?limit=1&offset=1"}},
+  "GET pokeapi.co/api/v2/pokemon?limit=1&offset=1":{"status":200,"body":{"results":[{"name":"ivysaur"}],"next":null}},
+  "GET pokeapi.co/api/v2/pokemon/missing":{"status":404,"body":{"detail":"Not found."}},
+  "GET jsonplaceholder.typicode.com/posts/1":{"status":200,"body":{"title":"hello","userId":1}},
+  "GET jsonplaceholder.typicode.com/users/1":{"status":200,"body":{"name":"Leanne","address":{"city":"Gwenborough"}}},
+  "GET jsonplaceholder.typicode.com/posts/999":{"status":404,"body":{}},
+  "GET geocoding-api.open-meteo.com/v1/search?name=Dubai&count=1":{"status":200,"body":{"results":[{"name":"Dubai","latitude":25.2048}]}},
+  "GET geocoding-api.open-meteo.com/v1/search?name=Nowhere&count=1":{"status":200,"body":{"results":[]}},
+  "GET geocoding-api.open-meteo.com/v1/search?name=RateLimit&count=1":{"status":429,"body":{"reason":"Hourly API request limit exceeded."}}
+}

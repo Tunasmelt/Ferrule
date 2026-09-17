@@ -1,0 +1,1 @@
+{"hosts":["api.stripe.com"],"steps":[{"id":"customer","method":"GET","url":"http://api.stripe.com/v1/customers/{{ input.id }}","headers":{"Authorization":"Bearer {{ secret.stripe_key }}"},"pagination":"none","expect":{"200":{"route":"ok","map":{"id":"response.id","email":"response.email"}},"default":{"route":"permanent_error","map":{"message":"response.error.message"}}}}]}

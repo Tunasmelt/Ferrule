@@ -1,0 +1,1 @@
+{"hosts":["api.github.com"],"steps":[{"id":"issues","method":"GET","url":"http://api.github.com/repos/{{ input.owner }}/{{ input.repo }}/issues","headers":{},"query":{"per_page":"1"},"pagination":"link_header","max_pages":2,"expect":{"200":{"route":"ok","map":{"issues":"response.data.map(x, x.title)"}},"default":{"route":"permanent_error","map":{"message":"response.message"}}}}]}

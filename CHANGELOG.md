@@ -7,6 +7,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Added — milestone 1c interpreter and mock execution
+
+- Added the Python restricted-plan interpreter with mandatory static checking,
+  deterministic templates, CEL response mapping, status routing, and bounded
+  cursor, offset, link-header, and non-paginated execution.
+- Added a loopback-only fixture server, `ferrule plan run-mock`, coverage
+  classification, and 15 recorded plans spanning GitHub, Stripe, PokeAPI,
+  JSONPlaceholder, and Open-Meteo geocoding.
+- Closed schema escape hatches for non-HTTP URLs, unknown fields, and excessive
+  pagination with a 100-page maximum, backed by 11 negative schema tests.
+
 ### Added — milestone 1b CEL integration and cost limits
 
 - Wired `cel-python` (`celpy`) into the plan-schema checker: `map`,

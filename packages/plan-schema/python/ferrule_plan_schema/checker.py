@@ -124,11 +124,11 @@ def check(plan: object) -> list[Finding]:
                     )
                 )
 
-        if step.get("pagination") in ("cursor", "offset") and "max_pages" not in step:
+        if step.get("pagination") in ("cursor", "offset", "link_header") and "max_pages" not in step:
             findings.append(
                 Finding(
                     "UNBOUNDED_PAGINATION",
-                    "cursor and offset pagination require max_pages",
+                    "pagination requires max_pages",
                     f"{base}.max_pages",
                 )
             )

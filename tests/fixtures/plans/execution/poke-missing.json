@@ -1,0 +1,1 @@
+{"hosts":["pokeapi.co"],"steps":[{"id":"pokemon","method":"GET","url":"http://pokeapi.co/api/v2/pokemon/{{ input.id }}","headers":{},"pagination":"none","expect":{"404":{"route":"not_found","map":{"message":"response.detail"}},"default":{"route":"permanent_error","map":{"message":"response.detail"}}}}]}

@@ -1,0 +1,1 @@
+{"hosts":["jsonplaceholder.typicode.com"],"steps":[{"id":"post","method":"GET","url":"http://jsonplaceholder.typicode.com/posts/{{ input.id }}","headers":{},"pagination":"none","expect":{"200":{"route":"ok","map":{"title":"response.title","user_id":"response.userId"}},"default":{"route":"permanent_error","map":{"status":"response.status"}}}}]}

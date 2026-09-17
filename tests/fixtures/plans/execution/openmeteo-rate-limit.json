@@ -1,0 +1,1 @@
+{"hosts":["geocoding-api.open-meteo.com"],"steps":[{"id":"geocode","method":"GET","url":"http://geocoding-api.open-meteo.com/v1/search","headers":{},"query":{"name":"{{ input.name }}","count":"1"},"pagination":"none","expect":{"429":{"route":"retryable_error","map":{"reason":"response.reason"}},"default":{"route":"permanent_error","map":{"reason":"response.reason"}}}}]}

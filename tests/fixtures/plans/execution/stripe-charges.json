@@ -1,0 +1,1 @@
+{"hosts":["api.stripe.com"],"steps":[{"id":"charges","method":"GET","url":"http://api.stripe.com/v1/charges","headers":{},"query":{"limit":"1","starting_after":""},"pagination":"cursor","max_pages":2,"expect":{"200":{"route":"ok","map":{"charges":"response.data.map(x, x.id)"}},"default":{"route":"permanent_error","map":{"message":"response.error.message"}}}}]}
