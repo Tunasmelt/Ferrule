@@ -52,6 +52,29 @@ class CanonicalizationTests(unittest.TestCase):
             ):
                 canonicalize(value)
 
+    def test_deeply_nested_input_is_rejected_not_a_crash(self) -> None:
+        # A RecursionError from Python's own recursion limit must surface
+        # as a controlled CanonicalizationError, matching the documented
+        # error contract -- not leak as an uncaught interpreter error.
+        nested = b"[" * 2000 + b"]" * 2000
+        with self.assertRaises(CanonicalizationError):
+            canonicalize(nested)
+
+    def test_rejects_unpaired_surrogate_escapes(self) -> None:
+        for value in (rb'{"x":"\ud800"}', rb'{"x":"\udc00"}'):
+            with self.subTest(value=value), self.assertRaises(CanonicalizationError):
+                canonicalize(value)
+
+    def test_accepts_valid_surrogate_pair_escape(self) -> None:
+        # A real astral character written as a \uXXXX\uXXXX escape PAIR in
+        # the JSON source text (not a literal UTF-8 character in this test
+        # file) must still canonicalize, combined into the correct 4-byte
+        # UTF-8 sequence. Built from ASCII bytes to keep the escape pair
+        # literal in the source rather than something a tool could silently
+        # normalise into an actual character.
+        source = b'{"x":"a' + b"\\ud83d\\ude00" + b'b"}'
+        self.assertEqual(b'{"x":"a\xf0\x9f\x98\x80b"}', canonicalize(source))
+
 
 if __name__ == "__main__":
     unittest.main()

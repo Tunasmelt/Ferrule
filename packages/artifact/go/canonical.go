@@ -18,6 +18,9 @@ func Canonicalize(input []byte) ([]byte, error) {
 	if !utf8.Valid(input) {
 		return nil, fmt.Errorf("%w: input is not UTF-8", ErrNonCanonical)
 	}
+	if err := rejectUnpairedSurrogateEscapes(input); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNonCanonical, err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
 	value, err := decodeValue(decoder)
@@ -35,6 +38,63 @@ func Canonicalize(input []byte) ([]byte, error) {
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+// rejectUnpairedSurrogateEscapes scans raw JSON text for \uXXXX escapes
+// inside string literals and rejects a lone UTF-16 surrogate half.
+// encoding/json silently substitutes U+FFFD for these instead of erroring,
+// which lets it accept input Python's canonicalizer rejects -- a
+// cross-language acceptance-domain mismatch. This must run on the raw
+// bytes: by the time json.Decoder hands back a decoded string, an invalid
+// escape has already been silently replaced, indistinguishable from a
+// legitimate literal U+FFFD character in the source.
+func rejectUnpairedSurrogateEscapes(input []byte) error {
+	inString := false
+	for i := 0; i < len(input); i++ {
+		b := input[i]
+		if !inString {
+			if b == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = false
+		case '\\':
+			if i+1 >= len(input) {
+				return nil // malformed; let json.Decoder report the real error
+			}
+			if input[i+1] != 'u' {
+				i++ // any other one-char escape (\\, \", \n, ...)
+				continue
+			}
+			if i+6 > len(input) {
+				return nil
+			}
+			code, err := strconv.ParseUint(string(input[i+2:i+6]), 16, 32)
+			if err != nil {
+				return nil // malformed hex; let json.Decoder report it
+			}
+			r := rune(code)
+			switch {
+			case r >= 0xD800 && r <= 0xDBFF: // high surrogate: needs a paired low next
+				if i+12 <= len(input) && input[i+6] == '\\' && input[i+7] == 'u' {
+					if code2, err2 := strconv.ParseUint(string(input[i+8:i+12]), 16, 32); err2 == nil {
+						if r2 := rune(code2); r2 >= 0xDC00 && r2 <= 0xDFFF {
+							i += 11 // consume both \uXXXX\uXXXX (loop's i++ adds the 12th)
+							continue
+						}
+					}
+				}
+				return fmt.Errorf("unpaired UTF-16 surrogate escape")
+			case r >= 0xDC00 && r <= 0xDFFF: // low surrogate with no preceding high
+				return fmt.Errorf("unpaired UTF-16 surrogate escape")
+			}
+			i += 5 // consume \uXXXX (loop's i++ adds the 6th)
+		}
+	}
+	return nil
 }
 
 func decodeValue(decoder *json.Decoder) (any, error) {

@@ -69,7 +69,14 @@ def canonicalize(value: object | bytes | str) -> bytes:
             )
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise CanonicalizationError(str(error)) from error
+        except RecursionError as error:
+            # Both parsing and re-encoding recurse per nesting level; input
+            # nested deep enough to hit Python's recursion limit is not a
+            # crash, it's non-canonical input we reject like any other.
+            raise CanonicalizationError("input is nested too deeply") from error
     try:
         return _encode(value).encode("utf-8")
     except UnicodeEncodeError as error:
         raise CanonicalizationError("strings must contain valid Unicode") from error
+    except RecursionError as error:
+        raise CanonicalizationError("input is nested too deeply") from error

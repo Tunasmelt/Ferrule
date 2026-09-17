@@ -54,3 +54,27 @@ func TestRejectsDuplicateObjectKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectsUnpairedSurrogateEscapes(t *testing.T) {
+	// Matches Python's canonicalizer, which rejects these outright rather
+	// than silently substituting U+FFFD the way encoding/json does by
+	// default -- a lone surrogate escape must fail the same way in both
+	// languages, not just happen to produce the same bytes when it doesn't.
+	for _, input := range []string{`{"x":"\ud800"}`, `{"x":"\udc00"}`} {
+		_, err := Canonicalize([]byte(input))
+		if !errors.Is(err, ErrNonCanonical) {
+			t.Errorf("Canonicalize(%q) error = %v, want ErrNonCanonical", input, err)
+		}
+	}
+}
+
+func TestAcceptsValidSurrogatePairEscape(t *testing.T) {
+	out, err := Canonicalize([]byte(`{"x":"a😀b"}`))
+	if err != nil {
+		t.Fatalf("Canonicalize error = %v", err)
+	}
+	want := "{\"x\":\"a\U0001F600b\"}"
+	if string(out) != want {
+		t.Errorf("Canonicalize = %q, want %q", out, want)
+	}
+}
