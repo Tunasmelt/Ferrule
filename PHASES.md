@@ -735,23 +735,32 @@ findings.
   transport error's text is redacted before `Forward` returns it.
   `TestForwardRedactsSecretFromDenialReason` and
   `TestForwardRedactsSecretFromTransportError` added.
-- **Tracked, not fixed here (Medium today, would become High if exposed
-  without change):** `Forward` trusts only the exported
+- **Follow-up fixed 2026-09-18 (was: Medium today, would become High if
+  exposed without change):** `Forward` trusted only the exported
   `decision.ChecksPassed` boolean, with nothing structurally tying a
-  `Decision` to a real `Authorize()` call — a caller can construct
+  `Decision` to a real `Authorize()` call — a caller could construct
   `Decision{ChecksPassed: true, RenderedRequest: "...{{ secret.X }}..."}`
   directly and obtain full secret resolution and forwarding with no
   artifact lookup, journal check, host check, or byte comparison ever
-  having run. This is the same API-coupling class fixed for
-  `Forward`/`AuthorizationRequest` in milestone 2b's audit, reintroduced
-  in a stronger form now that secrets are involved. Not fixed here
-  because there is still no real orchestrator or network-facing caller —
-  fixing it well means deciding how `Authorize` and `Forward` get bound
-  together (a single combined entry point? an unforgeable capability
-  token?), which milestone 2d's black-box permission-probe suite will
-  have to answer anyway once it needs "a running proxy instance" to test
-  against. Explicitly flagged as a prerequisite question for 2d, not
-  deferred indefinitely.
+  having run. Fixed with Go's own package-visibility boundary rather than
+  a runtime token: `Decision` now carries an additional unexported
+  `verified` field that only `Authorize`'s success path sets, and
+  `Forward` requires it alongside `ChecksPassed`. A caller outside
+  `package proxy` cannot set an unexported field at all — not "is
+  discouraged from", literally cannot, it's a compile error — so the
+  *only* way to produce a `Decision` `Forward` will act on is a real call
+  to `Authorize` that reaches its success path. Code inside this package
+  (including its own tests, which legitimately need to fabricate
+  decisions to unit-test `Forward` in isolation) is unaffected — that's
+  the intended boundary, not a hole in it.
+  `TestForwardRejectsChecksPassedWithoutAuthorize` proves a
+  same-package-but-not-through-`Authorize` construction is still
+  rejected, which is as close as a single package's own test suite can
+  get to proving the cross-package case without a second package to test
+  from. Whatever milestone eventually adds a real caller in a different
+  package (2d's permission-probe suite, or whichever milestone builds the
+  actual network entry point) inherits this guarantee automatically
+  rather than needing to re-derive it.
 
 Exit when: secret resolution, deletion failure class, and redaction tests
 pass. — met.

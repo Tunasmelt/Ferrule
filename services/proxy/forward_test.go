@@ -52,11 +52,36 @@ func TestForwardPassesResponseByteLimitToTransport(t *testing.T) {
 // authorizedDecision fabricates a Decision the way a real one would look
 // after Authorize succeeds, carrying the same identity fields Forward now
 // reads instead of a second, separately-suppliable AuthorizationRequest.
+// Setting the unexported `verified` field here is only possible because
+// this test file is part of package proxy -- that's the exact boundary
+// Forward's forgery check relies on; a caller in a different package
+// could not do this.
 func authorizedDecision(rawURL string) Decision {
 	return Decision{
 		NodeVersionHash: "sha256:node", RunID: "run-1", StepSeq: 2, StepID: "send",
 		ChecksPassed:    true,
+		verified:        true,
 		RenderedRequest: fmt.Appendf(nil, `{"method":"POST","url":%q,"headers":{"X-Test":"yes"},"body":{"value":"ordinary"}}`, rawURL),
+	}
+}
+
+// Regression, closed during the 2c audit follow-up: ChecksPassed alone
+// used to be Forward's only gate, and it is an exported field any package
+// can set. Forward must also require `verified`, an unexported field only
+// Authorize's success path can set -- a caller outside package proxy has
+// no way to set an unexported field at all, so it cannot forge a Decision
+// this way regardless of what it sets ChecksPassed to.
+func TestForwardRejectsChecksPassedWithoutAuthorize(t *testing.T) {
+	forged := Decision{
+		ChecksPassed:    true,
+		RenderedRequest: []byte(`{"method":"DELETE","url":"https://victim.example/admin","headers":{},"body":null}`),
+	}
+	_, _, err := Forward(forged, ForwardPolicy{MaxResponseBytes: 100}, nil, &CredentialStore{}, func(OutboundRequest, int) (OutboundResponse, error) {
+		t.Fatal("transport must not be called for a decision Authorize never produced")
+		return OutboundResponse{}, nil
+	})
+	if err == nil {
+		t.Fatal("expected Forward to reject a Decision not produced by Authorize")
 	}
 }
 

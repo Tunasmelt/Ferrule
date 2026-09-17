@@ -73,8 +73,17 @@ type ForwardPolicy struct {
 // step A's rendered request while attributing SecurityEvents to step B's
 // identifiers; there is no second identity parameter left to disagree with
 // the Decision.
+//
+// The real gate here is decision.verified, an unexported field only
+// Authorize's success path can set -- ChecksPassed alone is checked too
+// for a clearer error message, but a caller outside this package cannot
+// set ChecksPassed to true and have Forward honor it, because it cannot
+// set verified at all. This closes a gap tracked during the 2c audit:
+// previously any caller could forge Decision{ChecksPassed: true, ...}
+// and obtain full secret resolution and forwarding with no artifact
+// lookup, journal check, host check, or byte comparison ever having run.
 func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, store *CredentialStore, transport Transport) (OutboundResponse, *SecurityEvent, error) {
-	if !decision.ChecksPassed {
+	if !decision.ChecksPassed || !decision.verified {
 		return OutboundResponse{}, nil, errors.New("cannot forward an unauthorized request")
 	}
 	if transport == nil {

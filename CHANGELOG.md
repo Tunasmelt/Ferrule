@@ -7,6 +7,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 2c's last tracked item, fixed (2026-09-18)
+
+- ~~`Forward` trusted only the exported `decision.ChecksPassed` boolean,
+  letting any caller forge `Decision{ChecksPassed: true, ...}` and obtain
+  secret resolution/forwarding with no real `Authorize` call~~ — fixed
+  using Go's package-visibility boundary instead of a runtime token:
+  `Decision` gained an unexported `verified` field only `Authorize`'s
+  success path sets; `Forward` now requires it. A caller outside
+  `package proxy` cannot set an unexported field at all (compile error),
+  so the only way to produce a `Decision` `Forward` will honor is a real,
+  successful `Authorize` call. `TestForwardRejectsChecksPassedWithoutAuthorize`
+  added. `go vet`, `gofmt`, full `go test ./...`, `gate-2c`, `gate-2b`,
+  `gate-2a`, `make check`, `make conform` all green, no regressions.
+
 ### Milestone 2c dedicated audit (2026-09-18) — 3 fixed, 1 tracked
 
 Requested given 2c is the first code in this project to hold a real

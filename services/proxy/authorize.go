@@ -40,6 +40,19 @@ type Decision struct {
 	SubmittedRequest json.RawMessage
 	Reason           string
 	SecurityEvent    *SecurityEvent
+
+	// verified is deliberately unexported. Go forbids setting an
+	// unexported struct field from outside its declaring package, so a
+	// caller in a different package (a real orchestrator or HTTP handler,
+	// once one exists) cannot construct a Decision with ChecksPassed:
+	// true and have Forward act on it -- the only way to produce a
+	// Decision with verified set is to call Authorize and reach its
+	// success path. Code inside this package (including this package's
+	// own tests, which legitimately need to fabricate decisions to unit
+	// test Forward in isolation) can still set it directly; that is the
+	// intended boundary, not a bypass of it. Tracked as a gap in the 2c
+	// audit and closed here before 2d needs a real caller to trust this.
+	verified bool
 }
 
 func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRequest) Decision {
@@ -113,6 +126,7 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 		return deny(decision, "request_mismatch", requestMismatchReason(rendered, decision.SubmittedRequest))
 	}
 	decision.ChecksPassed = true
+	decision.verified = true
 	return decision
 }
 
