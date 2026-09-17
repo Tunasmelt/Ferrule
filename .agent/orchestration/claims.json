@@ -214,5 +214,21 @@
     "startedAt": "2026-09-17T22:15:21.472Z",
     "endedAt": "2026-09-17T22:22:20.012Z",
     "note": "codex exec succeeded"
+  },
+  "2d": {
+    "milestone": "2d",
+    "owner": "claude-code",
+    "status": "in_progress",
+    "startedAt": "2026-09-17T22:29:29.247Z",
+    "endedAt": null,
+    "note": ""
+  },
+  "2d-server": {
+    "milestone": "2d-server",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T22:30:22.382Z",
+    "endedAt": "2026-09-17T22:34:41.356Z",
+    "note": "codex exec succeeded"
   }
 }
