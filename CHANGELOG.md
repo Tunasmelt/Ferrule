@@ -7,14 +7,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
-### Known issues — Phase 0 + Phase 1 audit findings (2026-09-17)
+### Audit findings — Phase 0 + Phase 1 (2026-09-17) — ALL 11 FIXED
 
 Two independent audit passes (Codex fresh-context + Claude Code, each
 verifying the other's and its own findings by direct reproduction, not
 just static reading) found 11 real issues across Phase 0 and Phase 1.
 None were new regressions — all were pre-existing gaps in already-gated
-code. The 2 High findings were fixed the same day (2026-09-17, see "Fixed"
-below); the remaining 9 stay deferred to before or during Phase 2 work.
+code. All 11 were fixed the same day (2026-09-17): the 2 Highs first, then
+the 5 Mediums (4 dispatched to Codex in parallel, independently verified —
+one required a correction after review caught a gap; see below) and the 4
+Lows (fixed directly by Claude Code, per instruction). Every fix was
+re-verified against a fresh run of all six milestone gates
+(0a/0b/0c/1a/1b/1c) plus `go test`.
 
 **High — FIXED 2026-09-17**
 - ~~Pagination continuation in the interpreter follows a response-supplied
@@ -39,49 +43,59 @@ below); the remaining 9 stay deferred to before or during Phase 2 work.
   `breaking: false`. Go has full parity coverage across every constraint
   type. `packages/artifact/{python,go}/*diff*`.
 
-**Medium**
-- `artifact diff`'s plan-change detection ignores step reordering and every
-  plan-level field outside `steps` (including a bare-plan `hosts` change,
-  which is invisible because `diff.py` only checks the full-node-manifest
-  shape's `capabilities.hosts`, not milestone 1a's bare-plan top-level
-  `hosts` — these two document shapes were never reconciled). Duplicate
-  step IDs silently collapse to the last occurrence.
-- Duplicate JSON object keys silently collapse to the last value before
-  hashing/signing (confirmed identical last-wins behavior in Python and
-  Go, so not a cross-language divergence, but a parser-differential risk
-  against any other tool using first-key-wins semantics).
-- Dev-keygen overwrite protection (`exists()`/`Stat()` then write) is
-  TOCTOU-vulnerable to a race or symlink swap between check and write.
-  Impact limited by this being dev-only tooling.
-- The interpreter has no bound on a single response's byte size or decoded
-  JSON size — 100 pages (the pagination cap) of arbitrarily large bodies
-  can exhaust worker memory. Partly a deferred control (`SPEC.md` §4.1
-  assigns `max_output_bytes` enforcement to the Phase 2 proxy), but the
-  interpreter itself has no defense today.
-- Request rendering in the interpreter doesn't sort query parameters or
-  normalize header casing, violating invariant 5 (canonical/deterministic
-  rendering) — two semantically identical plans can render different byte
-  sequences, which is exactly the false-denial risk the Phase 2 proxy
-  comparison is fragile to.
+**Medium — FIXED 2026-09-17**
+- ~~`artifact diff`'s plan-change detection ignores step reordering and
+  every plan-level field outside `steps` (including a bare-plan `hosts`
+  change...)~~ — fixed: `plan_changes` now reports step-order changes,
+  duplicate step IDs, and plan-level fields other than `steps`. **Caught
+  during independent review**: Codex's first pass and its own test used a
+  "hosts nested inside plan" shape that doesn't exist anywhere in this
+  codebase, so the actual documented scenario (milestone 1a's bare-plan
+  document, `hosts` and `steps` both top-level, no `plan` wrapper) was
+  still unfixed. Corrected directly: the "plan sub-object" now falls back
+  to the document itself when no `plan` key exists. Added
+  `test_bare_plan_document_hosts_change_is_visible` /
+  `TestDiffBarePlanDocumentHostsChangeIsVisible` using the real shape so
+  this can't regress to the wrong one again.
+- ~~Duplicate JSON object keys silently collapse to the last value...~~ —
+  fixed: rejected at every nesting level in both languages
+  (`object_pairs_hook` in Python; a recursive `json.Decoder.Token()`
+  walker in Go, no new dependency). Verified top-level, nested, and
+  duplicate-inside-an-array-element cases.
+- ~~Dev-keygen overwrite protection is TOCTOU-vulnerable...~~ — fixed:
+  atomic `O_CREAT|O_EXCL` (Python `os.open`) / `O_CREATE|O_EXCL` (Go
+  `os.OpenFile`) create in both languages, permissions set at creation
+  (no separate `chmod`), with cleanup of a just-created private key if the
+  matching public key's creation then fails.
+- ~~The interpreter has no bound on a single response's byte size...~~ —
+  fixed: bounded read (1 MiB cap, matching `SPEC.md`'s own example) via
+  chunked reads before JSON parsing, raising `ResponseTooLargeError`
+  rather than buffering unbounded bytes first.
+- ~~Request rendering in the interpreter doesn't sort query parameters or
+  normalize header casing...~~ — fixed: query params sorted by key,
+  headers normalized to consistent title-case, both before rendering.
 
-**Low**
-- Python and Go **disagree on acceptance** of an unpaired UTF-16 surrogate
-  escape (e.g. `"\ud83d"` with no matching low surrogate): Python's
-  canonicalizer rejects it with `CanonicalizationError`; Go's
-  `encoding/json` silently substitutes U+FFFD and proceeds. Valid
-  surrogate pairs (real astral characters) match correctly in both.
-- Deeply nested input (500+ levels) raises an uncaught `RecursionError` in
-  the Python canonicalizer, bypassing the CLI's documented
-  `CanonicalizationError`/`TypeError`/`ValueError` error contract.
-- `chmod(0o600)` on the dev private key happens after the write (a brief
-  POSIX race window under the process umask) and is a no-op ACL-wise on
-  Windows regardless.
-- CRLF injected into a rendered header value (via a crafted `input`/
-  `response` field) is blocked by Python's stdlib `http.client` before it
-  reaches the wire — not an actual injection vector — but the interpreter
-  doesn't translate that rejection into a controlled `PlanRejected`; it's
-  an unhandled `ValueError` that happens to get caught by the CLI's broad
-  handler.
+**Low — FIXED 2026-09-17 (by Claude Code directly, per instruction)**
+- ~~Python and Go disagree on acceptance of an unpaired UTF-16 surrogate
+  escape...~~ — fixed: `canonical.go` now pre-scans raw JSON text for
+  `\uXXXX` escapes inside string literals and rejects a lone surrogate
+  half, matching Python. Has to happen on the raw bytes, since by the time
+  `json.Decoder` returns a string an invalid escape is already silently
+  replaced — indistinguishable at that point from a legitimate literal
+  U+FFFD character. Verified against every edge case: lone high/low
+  surrogates rejected, valid pairs still combine correctly, an escaped
+  backslash before literal `u0041` isn't misdetected, a genuine U+FFFD
+  character is unaffected, and a pair inside an object *key* is caught too.
+- ~~Deeply nested input raises an uncaught `RecursionError`...~~ — fixed:
+  `canonicalize()` catches `RecursionError` around both parsing and
+  re-encoding, re-raising as `CanonicalizationError`.
+- ~~`chmod(0o600)` happens after the write...~~ — resolved as a byproduct
+  of the keygen TOCTOU fix above (permissions are now set atomically at
+  creation, so there's no longer a separate `chmod` step at all).
+- ~~CRLF injected into a rendered header value... doesn't translate into a
+  controlled `PlanRejected`...~~ — fixed as part of the interpreter
+  Medium fixes above: the underlying `ValueError` is now caught and
+  re-raised as `PlanRejected`.
 
 **Checked and confirmed fine, no gap:** CEL's namespace restriction under
 macro-local variable shadowing (`map(secret, secret)` compiles but is
