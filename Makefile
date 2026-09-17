@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -13,7 +13,7 @@ signing-conform:
 	python tests/signing_conformance.py
 
 security:
-	@echo "No proxy security suite exists before phase 2."
+	go test ./services/proxy/... -run '^TestPermissionProbes$$' -v
 
 gate-0a: check conform
 
@@ -45,3 +45,11 @@ gate-2b:
 
 gate-2c:
 	go test ./services/proxy/...
+
+gate-2d:
+	go test ./services/proxy/... -run 'PermissionProbes|ProxyLatency' -v
+
+# PHASES.md's phase-level gate: the union of that phase's milestone gates,
+# plus make security (also required, but tracked as its own invocation per
+# CLAUDE.md/AGENTS.md, not folded silently into this target).
+gate-2: gate-2a gate-2b gate-2c gate-2d

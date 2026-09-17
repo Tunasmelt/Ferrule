@@ -7,6 +7,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Phase 2 milestone 2d — Adversarial verification suite (2026-09-18)
+
+**Phase 2 is now fully closed.** Built by Codex via `codex-task.mjs` in
+two bounded dispatches, each independently verified.
+
+Dispatch 1: `services/proxy/http_transport.go` (the project's first real
+`net/http` `Transport`, with automatic redirects disabled via
+`CheckRedirect` so `Forward`'s own redirect policy from milestone 2b
+actually runs against real HTTP responses instead of being silently
+bypassed by the client) and `server.go` (the project's first real HTTP
+server, `POST /v1/authorize`, wrapping `Authorize`+`Forward` -- it calls
+`Authorize` itself and passes its exact `Decision` straight to `Forward`,
+never constructing one, since it couldn't set the unexported `verified`
+field anyway).
+
+**Caught during review, fixed before dispatch 2:** `server.go` copied the
+upstream's `Content-Length` header through unchanged, but `Forward`'s
+redaction can change `response.Body`'s length relative to what the
+upstream declared. Reproduced in complete isolation from this codebase:
+writing a body whose real length differs from a copied, stale, smaller
+`Content-Length` makes Go's own `net/http` client read zero bytes for the
+ENTIRE response and report `"unexpected EOF"` -- not a graceful
+truncation. Fixed by omitting `Content-Length`/`Transfer-Encoding` from
+the copied headers and letting `net/http` compute the correct one.
+`TestServerOmitsStaleContentLengthAfterRedaction` added.
+
+Dispatch 2: `probe.go` (`RunPermissionProbes`, an exported, reusable
+black-box HTTP harness covering all 12 of 2b's and 2c's denial/injection
+cases against a real running server with a real transport -- this becomes
+phase 4's verification stage, built once), `latency_test.go` (p95 ≈
+530-570 µs over 150 requests at 50 rps, comfortably under the 25 ms bar),
+and a real `make security` target.
+
+Codex correctly found and honestly reported two real gaps at the
+HTTP-surface boundary rather than working around them out of its
+authorized scope (it was told not to touch `forward.go`/`server.go` for
+that dispatch):
+- A real `Transport` enforcing the response-size bound returned a plain
+  untyped error on overflow, which `Forward` passed through as a generic
+  error instead of a `response_too_large` `SecurityEvent` -- the
+  mock-transport unit tests never caught this since mocks just returned
+  an oversized value directly. Fixed with a new typed
+  `ResponseTooLargeError`.
+- `ResolveSecrets`' `*FailureClassError` (`"auth"` on a deleted
+  credential) was discarded into the same generic message as any other
+  `Forward` error. Fixed in `server.go`: recognizes `*FailureClassError`,
+  responds `403` with a `failure_class` field.
+
+All 12 permission probes pass; `gate-2d`, `gate-2c`, `gate-2b`, `gate-2a`,
+`gate-2` (new aggregate Makefile target), `make security`, `make check`,
+`make conform` all green.
+
 ### Milestone 2c's last tracked item, fixed (2026-09-18)
 
 - ~~`Forward` trusted only the exported `decision.ChecksPassed` boolean,

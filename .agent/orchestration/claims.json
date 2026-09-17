@@ -218,9 +218,9 @@
   "2d": {
     "milestone": "2d",
     "owner": "claude-code",
-    "status": "in_progress",
+    "status": "done",
     "startedAt": "2026-09-17T22:29:29.247Z",
-    "endedAt": null,
+    "endedAt": "2026-09-17T22:50:15.133Z",
     "note": ""
   },
   "2d-server": {
@@ -229,6 +229,14 @@
     "status": "done",
     "startedAt": "2026-09-17T22:30:22.382Z",
     "endedAt": "2026-09-17T22:34:41.356Z",
+    "note": "codex exec succeeded"
+  },
+  "2d-probes": {
+    "milestone": "2d-probes",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T22:40:10.308Z",
+    "endedAt": "2026-09-17T22:45:55.561Z",
     "note": "codex exec succeeded"
   }
 }

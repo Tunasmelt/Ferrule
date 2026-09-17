@@ -40,7 +40,7 @@ in the same commit that closes the gate; don't let it drift from
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
 | 1 — Plan language | 1a ✅ / 1b ✅ / 1c ✅ | **closed** |
-| 2 — Proxy & broker | 2a ✅ / 2b ✅ / 2c ✅ / 2d ⬜ | in progress |
+| 2 — Proxy & broker | 2a ✅ / 2b ✅ / 2c ✅ / 2d ✅ | **closed** |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
 | 5 — Durable execution | 5a–5c ⬜ | not started |
@@ -765,30 +765,109 @@ findings.
 Exit when: secret resolution, deletion failure class, and redaction tests
 pass. — met.
 
-### Milestone 2d — Adversarial verification suite
+### Milestone 2d — Adversarial verification suite — ✅ CLOSED 2026-09-18
 
 Deliverables
-- Permission probe suite as a standalone, repeatable adversarial test harness
-  (this becomes the phase-4 verification stage later — build it once, reuse
-  it)
-- Latency benchmark harness (local mock, controllable rps)
+- [x] Permission probe suite as a standalone, repeatable adversarial test
+      harness (`services/proxy/probe.go`'s exported `RunPermissionProbes`,
+      not test-only code — it takes an already-running proxy's base URL and
+      an environment to register fixtures against, so phase 4 can reuse it
+      unchanged against a differently-hosted proxy instance later)
+- [x] Latency benchmark harness (`services/proxy/latency_test.go`, local
+      mock, controllable rps)
+- [x] (Beyond the original deliverables, required to make either of the
+      above possible) `services/proxy/http_transport.go`: the project's
+      first real `net/http`-backed `Transport`, and `services/proxy/server.go`:
+      the project's first real HTTP server, exposing `POST /v1/authorize`
+      and wrapping `Authorize`+`Forward`. Milestone 2d's own test criteria
+      require "a running proxy instance" and "black-box HTTP tests" — that
+      requires an actual server and outbound transport to exist for the
+      first time, so building them was this milestone's necessary, not
+      incidental, first half.
 
 Test criteria
-- [ ] Permission probe suite runs all of 2b's and 2c's denial/injection cases
-      against a running proxy instance as black-box HTTP tests, not unit
-      tests against internal functions
-- [ ] p95 added latency < 25 ms under 50 rps against a local mock
+- [x] Permission probe suite runs all of 2b's and 2c's denial/injection cases
+      against a running proxy instance as black-box HTTP tests — 12/12
+      cases, every one driven as a real HTTP POST against a real
+      `httptest`-hosted server using the real `HTTPTransport` (not a mock)
+      talking to its own real local adversarial upstream: submitted URL
+      mismatch, capabilities-cannot-widen-plan-hosts, method mismatch,
+      cross-host redirect (with a call counter proving the target is never
+      fetched), same-host redirect budget (both within-budget success and
+      over-budget denial), oversized response, disallowed content type,
+      injection-probe inertness (verified against an equal-length control
+      body, headers/status compared for exact equality), secret resolution
+      end-to-end (verified by inspecting the real header the mock upstream
+      received), deleted-credential auth failure, response-echo redaction,
+      and denial-metadata redaction.
+- [x] p95 added latency < 25 ms under 50 rps against a local mock —
+      measured p95 ≈ 530–570 µs over 150 requests paced at 50 rps
+      (real numbers from repeated runs, not a single cherry-picked one),
+      comfortably under the 25 ms bar; expected to be this low since
+      everything is loopback/in-process with no real network hop.
 
-Gate `make gate-2d` / `make security`
-`make security` is the permission probe suite referenced by
-`CLAUDE.md`/`AGENTS.md` as required before any completion claim from this
-point forward in the project — not just for phase 2.
+Gate `make gate-2d` / `make security` — **passing** (verified 2026-09-18,
+independently re-run repeatedly). Built by Codex via `codex-task.mjs` in
+two bounded dispatches (the server+transport; then the probe suite+latency
+benchmark), each independently verified.
 
-### Phase 2 gate
+**Caught during independent review of the first dispatch, fixed before
+building the second:** `server.go` copied the upstream's `Content-Length`
+header through to the caller unchanged. `Forward`'s redaction (milestone
+2c) can change `response.Body`'s length relative to what the upstream
+declared, since a secret and `"[REDACTED]"` are rarely the same length.
+Reproduced in complete isolation from this codebase before touching any
+file: writing a body whose real length differs from a copied, smaller,
+stale `Content-Length` makes Go's own `net/http` **client** read zero
+bytes for the entire response and report `"unexpected EOF"` — not a
+graceful truncation. This would have made virtually any real request that
+triggered redaction unreadable by any standard HTTP client. Fixed by
+omitting `Content-Length` and `Transfer-Encoding` from the copied headers
+and letting `net/http` compute the correct one from what is actually
+written. `TestServerOmitsStaleContentLengthAfterRedaction` added, driving
+a real HTTP round trip that would have failed with `"unexpected EOF"`
+before the fix.
+
+**Caught by Codex during the second dispatch, correctly reported rather
+than worked around out of scope, then fixed directly:** two real gaps at
+the boundary between the new HTTP surface and existing `forward.go`/
+`server.go` (both files Codex was correctly told not to touch for that
+dispatch):
+- A real `Transport` enforcing `MaxResponseBytes` via `BoundedRead` (as
+  its own doc comment already said it should) returned a plain untyped
+  `error` on overflow, which `Forward` then returned as a generic error
+  instead of a `response_too_large` `SecurityEvent` — the mock-transport
+  unit tests never caught this because mock transports just returned an
+  oversized `OutboundResponse` value directly, letting `Forward`'s
+  separate post-hoc length check catch it instead. Fixed with a new typed
+  `ResponseTooLargeError` that `BoundedRead` returns and `Forward`
+  recognizes via `errors.As`, converting it into the same `SecurityEvent`
+  the mock-transport path already produced.
+- `ResolveSecrets`' `*FailureClassError` (milestone 2c, `"auth"` on a
+  deleted credential) was silently discarded into the same generic
+  `"upstream request failed"` message as any other `Forward` error,
+  losing exactly the distinction failure classes exist to carry (SPEC.md
+  §7: `auth` means no retry). Fixed in `server.go` by recognizing
+  `*FailureClassError` and responding `403` with a `failure_class` field
+  — `403` because this is an authorization-shaped failure, matching the
+  pre-`Forward` denial responses, not an upstream problem.
+Both fixes verified by re-running the probe suite Codex had already
+written (which correctly expected this behavior and failed honestly
+against the pre-fix code) — 12/12 probes pass after the fixes, one probe
+assertion's expected status code (403, not 502) was corrected to match
+the actual, reviewed design decision made when fixing the second gap.
+
+Exit when: permission probe suite and latency benchmark pass. — met.
+
+### Phase 2 gate — ✅ CLOSED 2026-09-18
 
 `make gate-2` = `gate-2a` + `gate-2b` + `gate-2c` + `gate-2d`.
 
-Exit when: `make gate-2` exits 0 **and** `make security` exits 0.
+Exit when: `make gate-2` exits 0 **and** `make security` exits 0. — **met,
+all of Phase 2 is closed.** The core security claim (SPEC.md §2.1: no
+request a plan doesn't already describe, no credential reaching the
+worker) now has independently-verified, adversarially-tested, real-HTTP
+evidence behind it, not just unit tests against internal functions.
 
 ---
 

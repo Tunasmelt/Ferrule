@@ -37,6 +37,27 @@ type OutboundResponse struct {
 // rely on.
 type Transport func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error)
 
+// ResponseTooLargeError is returned by BoundedRead when a source produces
+// more than the configured limit. It is a distinct type (not a plain
+// fmt.Errorf string) so Forward can recognize "the response was too large"
+// -- a legitimate, policy-driven denial that deserves a response_too_large
+// SecurityEvent, exactly like the mock-transport path already produces --
+// and tell it apart from an actual transport failure (network error, DNS
+// failure, connection reset), which should surface as a plain error
+// instead. Found missing during milestone 2d's own review: a real
+// Transport enforcing this bound during acquisition (as BoundedRead's own
+// doc comment says it should) used to make that distinction impossible,
+// since Forward only ever saw an untyped error and fell through to a
+// generic "upstream request failed" response, discarding the SecurityEvent
+// entirely.
+type ResponseTooLargeError struct {
+	Limit int
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("response exceeds %d byte limit", e.Limit)
+}
+
 // BoundedRead reads at most maxBytes from r into memory, refusing to
 // buffer more than that even if r would produce more. Reads one byte past
 // the limit to distinguish "exactly the limit" from "more than the limit"
@@ -52,7 +73,7 @@ func BoundedRead(r io.Reader, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > maxBytes {
-		return nil, fmt.Errorf("response exceeds %d byte limit", maxBytes)
+		return nil, &ResponseTooLargeError{Limit: maxBytes}
 	}
 	return data, nil
 }
@@ -106,12 +127,17 @@ func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, s
 	for {
 		response, err := transport(outbound, policy.MaxResponseBytes)
 		if err != nil {
+			reason := string(Redact([]byte(err.Error()), secretValues))
+			var tooLarge *ResponseTooLargeError
+			if errors.As(err, &tooLarge) {
+				return forwardDenied(decision, secretValues, "response_too_large", reason)
+			}
 			// The transport received the resolved (secret-bearing) outbound
 			// request, and a real HTTP client's error text commonly echoes
 			// the request URL or other details. Redact before returning so
 			// a transport that does this (buggy or malicious) can't hand a
 			// raw credential back to the caller through an error message.
-			return OutboundResponse{}, nil, errors.New(string(Redact([]byte(err.Error()), secretValues)))
+			return OutboundResponse{}, nil, errors.New(reason)
 		}
 		location := headerValue(response.Headers, "Location")
 		if response.Status >= 300 && response.Status < 400 && location != "" {

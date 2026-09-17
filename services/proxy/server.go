@@ -58,6 +58,20 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	if err != nil {
+		// ResolveSecrets returns a *FailureClassError (SPEC.md section 7)
+		// when a plan's secret has no binding or its bound credential is
+		// missing/deleted. Found missing during milestone 2d's own review:
+		// this used to be discarded into the same generic message as any
+		// other Forward error, so a caller had no way to distinguish "the
+		// credential was deleted, don't retry" from a transient network
+		// failure -- exactly the distinction failure classes exist to
+		// carry. 403 matches the pre-Forward denial responses above: this
+		// is an authorization-shaped failure, not an upstream problem.
+		var failure *FailureClassError
+		if errors.As(err, &failure) {
+			writeJSON(writer, http.StatusForbidden, map[string]string{"failure_class": failure.Class, "error": failure.Error()})
+			return
+		}
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "upstream request failed"})
 		return
 	}
