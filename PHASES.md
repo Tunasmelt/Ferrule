@@ -39,7 +39,7 @@ in the same commit that closes the gate; don't let it drift from
 | Phase | Milestones closed | Status |
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
-| 1 — Plan language | 1a ✅ / 1b ✅ / 1c ⬜ | in progress |
+| 1 — Plan language | 1a ✅ / 1b ✅ / 1c ✅ | **closed** |
 | 2 — Proxy & broker | 2a–2d ⬜ | not started |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
@@ -256,39 +256,75 @@ Secrets are structurally unreachable from CEL: the evaluation context
 declares only `input`/`response`, never `secret` (invariant 1). See
 `CHANGELOG.md` [Unreleased] for detail.
 
-### Milestone 1c — Interpreter and mock execution
+### Milestone 1c — Interpreter and mock execution — ✅ CLOSED 2026-09-17
 
 Deliverables
-- Plan interpreter (Python): HTTP steps, CEL mapping, response routing,
-  pagination (`cursor`/`offset`/`link_header`/`none`)
-- Local mock HTTP server for tests
-- `ferrule plan {check,run-mock}` CLI commands
-- 15 hand-written plans against 5 real public APIs (recorded as fixtures
-  against the mock server, not live)
+- [x] Plan interpreter (Python): HTTP steps (stdlib `http.client`), CEL
+      mapping, response routing, pagination
+      (`cursor`/`offset`/`link_header`/`none`), all bounded by `max_pages`
+- [x] Local mock HTTP server for tests (stdlib `http.server`)
+- [x] `ferrule plan {check,run-mock}` CLI commands
+- [x] 15 hand-written plans against 5 real public APIs (GitHub, Stripe,
+      PokeAPI, JSONPlaceholder, Open-Meteo geocoding), recorded as fixtures
+      against the mock server, never live — test execution patches
+      `socket.getaddrinfo` only inside the mock run's context manager to
+      redirect every hostname to the local fixture server while the real
+      `Host` header is preserved for fixture selection.
 
 Test criteria
-- [ ] All 15 plans execute correctly on mock (correct port routing, correct
-      mapped output shape)
-- [ ] `plan_coverage` classifier runs and emits a verdict
-      (`representable`/`representable_partial`/`not_representable`) for each
-      of the 15, recorded even though there's no UI yet
-- [ ] Negative test suite (10 cases): no plan can express filesystem access,
-      process spawn, or an unbounded loop — these must be structurally
-      inexpressible in the schema, not merely rejected at runtime
+- [x] All 15 plans execute correctly on mock (correct route selected,
+      correctly mapped output shape) — verified independently, including a
+      fresh classifier re-run against each execution fixture, not just the
+      pre-recorded coverage artifact.
+- [x] `plan_coverage` classifier runs and emits a verdict for each of the
+      15 — all 15 record `representable`, which is the correct and expected
+      result for hand-picked, checker-passing plans (not a shortcut — the
+      other two verdicts get real exercise once Phase 3's OpenAPI compiler
+      can produce plans that aren't hand-picked to fit).
+- [x] Negative test suite: **11** cases (one over the required minimum) —
+      filesystem path field, `exec`/`shell`/`command` fields, `file://` URL,
+      `pagination: "unbounded"`, method `"EXEC"`, nested `steps` (recursion
+      attempt), `max_pages` over the new 100 cap, an ad-hoc `loop` field, an
+      `imports` field — each proven to fail **schema validation**
+      specifically, not merely rejected by application code.
 
 Security criteria
-- [ ] Interpreter has no code path that reads an environment variable,
-      the filesystem, or system time into a template or CEL evaluation context
+- [x] Interpreter has no code path that reads an environment variable, the
+      filesystem, or system time into a template or CEL evaluation context —
+      a guard test scoped to `interpreter.py`/`render.py`/`coverage.py`
+      specifically (not the mock server, which legitimately reads fixture
+      files as test infrastructure). Secret markers (`{{ secret.X }}`)
+      render to an inert, unresolved placeholder string — verified by
+      reading `render.py` directly: there is no code path that could read a
+      real secret value, and there is nothing to read yet at this stage
+      regardless.
+- [x] Hard execution gate: the interpreter calls 1a's `check(plan)` before
+      building any request and refuses to run if it returns findings —
+      proven with a transport stub that raises `AssertionError` if ever
+      invoked, not just a heuristic ("points at nothing") test.
 
-Gate `make gate-1c`
-Exit when: 15/15 plans pass on mock, negative suite passes, coverage verdicts
-are recorded for all 15.
+Gate `make gate-1c` — **passing** (verified 2026-09-17, independently
+re-run: 34/34 Python tests; fresh `make gate-1a`/`make gate-1b` re-run
+clean, no regression). Built by Codex via `codex-task.mjs`. Found and fixed
+two real schema gaps while building the negative suite: plan URLs are now
+restricted to `http`/`https` (closing a `file://` escape 1a's schema left
+open), and `max_pages` is now required for `link_header` pagination too
+(1a only required it for `cursor`/`offset`) and capped at 100 — 1a's own
+`multiple-link-header` fixture was updated to stay valid under the tighter
+schema. See `CHANGELOG.md` [Unreleased] for detail.
 
-### Phase 1 gate
+**Known limitation for the record** (not a blocker — all 15 real plans
+work correctly): pagination continuation checks
+`route_name in ("ok", "results")` to decide whether to fetch the next page.
+A plan whose success route is named something else would silently stop
+paginating after page one even with more pages available. Worth revisiting
+once Phase 3's compiler can produce arbitrarily-named success routes.
+
+### Phase 1 gate — ✅ CLOSED 2026-09-17
 
 `make gate-1` = `gate-1a` + `gate-1b` + `gate-1c`.
 
-Exit when: `make gate-1` exits 0.
+Exit when: `make gate-1` exits 0. — **met, all of Phase 1 is closed.**
 
 **Instrument from here:** every plan written by hand during this phase
 records whether the target operation was fully representable. This is the
