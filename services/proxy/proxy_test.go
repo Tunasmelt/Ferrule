@@ -5,11 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"go/scanner"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	artifact "ferrule/packages/artifact/go"
 )
@@ -112,7 +114,7 @@ func setupAuthorization(t *testing.T) (*ArtifactCache, *MemoryRunJournal, Author
 		t.Fatal(err)
 	}
 	journal := NewMemoryRunJournal()
-	row, err := journal.RecordInput("run-1", 1, json.RawMessage(`{"id":"42"}`))
+	row, err := journal.RecordInput("run-1", 1, json.RawMessage(`{"id":"42"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +147,66 @@ func TestAuthorizeReturnsBothCanonicalRequests(t *testing.T) {
 	}
 }
 
+// Regression for a real gap caught in review: Authorize used to hardcode a
+// nil "previous" context when re-rendering, but a step's URL/header/body
+// templates can reference {{ response.x }}, which the Python interpreter
+// binds to the PREVIOUS step's mapped output -- exactly what
+// tests/fixtures/plans/valid/cursor.json does for pagination
+// ("cursor": "{{ response.next_cursor }}"). Reproduce that fixture's shape
+// here and confirm the proxy's independent re-render actually incorporates
+// the journaled previous-step context instead of silently rendering empty.
+func TestAuthorizeUsesJournaledPreviousContext(t *testing.T) {
+	manifest := `{"hosts":["api.example.com"],"steps":[{"id":"list","method":"GET","url":"https://api.example.com/items","headers":{},"query":{"account":"{{ input.account.id }}","cursor":"{{ response.next_cursor }}"}}]}`
+	hash, signed, publicKey := signedManifest(t, manifest)
+	cache := NewArtifactCache()
+	if err := cache.Push(hash, signed, publicKey); err != nil {
+		t.Fatal(err)
+	}
+	journal := NewMemoryRunJournal()
+	row, err := journal.RecordInput(
+		"run-1", 2,
+		json.RawMessage(`{"account":{"id":"acct-1"}}`),
+		json.RawMessage(`{"next_cursor":"page-2-cursor-abc"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := AuthorizationRequest{
+		NodeVersionHash: hash, RunID: "run-1", StepSeq: 2, StepID: "list",
+		StepInputDigest: row.Digest, CanonicalizedRequest: json.RawMessage(`{"worker":true}`),
+	}
+	decision := Authorize(cache, journal, request)
+	if !decision.ChecksPassed {
+		t.Fatalf("expected checks to pass: %+v", decision)
+	}
+	want := `{"method":"GET","url":"https://api.example.com/items?account=acct-1&cursor=page-2-cursor-abc","headers":{},"body":null}`
+	if string(decision.RenderedRequest) != want {
+		t.Fatalf("got  %s\nwant %s", decision.RenderedRequest, want)
+	}
+}
+
 func TestNoForbiddenIdentifiers(t *testing.T) {
-	forbidden := regexp.MustCompile(`(?i)\b(skip_verify|bypass|trusted|danger_full_access)\b`)
+	for _, identifier := range []string{
+		"SkipVerify", "IsTrusted", "TrustedHost", "isBypass", "dangerFullAccess",
+		"skip_verify", "DANGER_FULL_ACCESS",
+	} {
+		t.Run(identifier, func(t *testing.T) {
+			source := []byte("package synthetic\nvar " + identifier + " bool\n")
+			if got := findForbiddenIdentifier(source); got == "" {
+				t.Fatalf("identifier %q was not detected", identifier)
+			}
+		})
+	}
+	for _, source := range []string{
+		"package synthetic\nvar Truster bool\n",
+		"package synthetic\n// do not trust this input\nvar safe bool\n",
+		"package synthetic\nvar warning = `IsTrusted`\n",
+	} {
+		if got := findForbiddenIdentifier([]byte(source)); got != "" {
+			t.Errorf("ordinary source flagged forbidden identifier %q", got)
+		}
+	}
+
 	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -158,7 +218,7 @@ func TestNoForbiddenIdentifiers(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if match := forbidden.Find(contents); match != nil {
+		if match := findForbiddenIdentifier(contents); match != "" {
 			t.Errorf("%s contains forbidden identifier %q", path, match)
 		}
 		return nil
@@ -166,4 +226,54 @@ func TestNoForbiddenIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func findForbiddenIdentifier(source []byte) string {
+	var scan scanner.Scanner
+	scan.Init(token.NewFileSet().AddFile("", -1, len(source)), source, nil, 0)
+	for {
+		_, tok, identifier := scan.Scan()
+		if tok == token.EOF {
+			return ""
+		}
+		if tok != token.IDENT {
+			continue
+		}
+		parts := identifierParts(identifier)
+		for i, part := range parts {
+			if part == "bypass" || part == "trusted" ||
+				i+1 < len(parts) && part == "skip" && parts[i+1] == "verify" ||
+				i+2 < len(parts) && part == "danger" && parts[i+1] == "full" && parts[i+2] == "access" {
+				return identifier
+			}
+		}
+	}
+}
+
+func identifierParts(identifier string) []string {
+	// Split only lower-to-upper camel-case boundaries. Acronym-heavy names without
+	// underscores (for example, DANGERFullAccess) are a known limitation.
+	var parts []string
+	var part strings.Builder
+	previousLower := false
+	flush := func() {
+		if part.Len() != 0 {
+			parts = append(parts, part.String())
+			part.Reset()
+		}
+	}
+	for _, r := range identifier {
+		if r == '_' {
+			flush()
+			previousLower = false
+			continue
+		}
+		if unicode.IsUpper(r) && previousLower {
+			flush()
+		}
+		part.WriteRune(unicode.ToLower(r))
+		previousLower = unicode.IsLower(r)
+	}
+	flush()
+	return parts
 }

@@ -49,12 +49,20 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 		return decision
 	}
 	decision.DigestMatched = true
-	input, err := decodeJSONMap(entry.Input)
+	envelope, err := decodeJSONMap(entry.Context)
 	if err != nil {
 		decision.Reason = "journal input is invalid"
 		return decision
 	}
-	rendered, err := RenderRequest(step, input, nil)
+	input, ok := envelope["input"].(map[string]any)
+	if !ok {
+		input = map[string]any{}
+	}
+	previous, ok := envelope["previous"].(map[string]any)
+	if !ok {
+		previous = map[string]any{}
+	}
+	rendered, err := RenderRequest(step, input, previous)
 	if err != nil {
 		decision.Reason = err.Error()
 		return decision

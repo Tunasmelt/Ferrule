@@ -38,6 +38,78 @@ the real shape as a permanent regression test. Re-verified `gate-2a`,
 `make check`, `make conform` all green after the fix, no regression on
 phases 0–1.
 
+### Milestone 2a second audit pass (2026-09-17) — 4 findings, ALL FIXED
+
+Requested a dedicated audit of already-closed milestone 2a. Claude Code did
+an independent read-and-reproduce pass; Codex then ran a second,
+independent, read-only pass over the same files with no visibility into
+the first pass's findings. Two were caught by both:
+
+**High — FIXED**
+- ~~`Authorize()` always called `RenderRequest(step, input, nil)`, hardcoding
+  the previous-step/`response` rendering context to nil~~ — fixed: Python's
+  `render.py`/`interpreter.py` bind `{{ response.x }}` markers to the
+  *previous step's* mapped output, not the live HTTP response of the
+  current step. `tests/fixtures/plans/valid/cursor.json` already depends on
+  this for pagination (`"cursor": "{{ response.next_cursor }}"`). Reproduced
+  directly: re-rendering that fixture's step with a real previous-page
+  value produced `cursor=page-2-cursor-abc`; through `Authorize()` it
+  rendered `cursor=` (empty). Codex's independent pass reached the same
+  finding and sharpened the severity: this doesn't just cause false
+  denials, it can let a worker's genuinely divergent request coincide with
+  the proxy's wrongly-empty re-derivation, undermining the re-derivation
+  guarantee itself. Fixed by Claude Code directly: `JournalEntry` now
+  stores a canonical `{"input": ..., "previous": ...}` envelope instead of
+  bare input, with the digest covering both; `RunJournal.RecordInput` takes
+  a `previous` parameter; `Authorize` decodes both and passes the real
+  `previous` context to `RenderRequest`. Added
+  `TestAuthorizeUsesJournaledPreviousContext` reproducing the `cursor.json`
+  pattern end-to-end through `Authorize`.
+
+**Medium — FIXED**
+- ~~`TestNoForbiddenIdentifiers`'s regex
+  `(?i)\b(skip_verify|bypass|trusted|danger_full_access)\b` never matched
+  Go-idiomatic camelCase/PascalCase identifiers~~ — confirmed independently
+  by both audits (word-boundary anchors don't fire inside a camelCase
+  transition; `SkipVerify`, `IsTrusted`, `TrustedHost`, `isBypass` all
+  evaded it, verified by actually running the regex against sample
+  identifiers). This is the exact test CLAUDE.md calls out as enforcing "no
+  bypass, ever," and it only caught spellings nothing in idiomatic Go uses.
+  Fixed by Codex (dispatched, verified independently after): replaced the
+  regex with a `go/scanner`-based tokenizer that inspects only `IDENT`
+  tokens, splits on underscores and lower-to-upper camelCase boundaries,
+  and matches the banned concepts as whole word-parts regardless of casing
+  convention. Verified it now catches `SkipVerify`, `IsTrusted`,
+  `TrustedHost`, `isBypass`, `dangerFullAccess`, `skip_verify`, and
+  `DANGER_FULL_ACCESS`, while not flagging `Truster` or `trust` inside a
+  comment or string literal.
+- ~~Header-name collisions after title-casing resolve differently in Python
+  and Go~~ — new finding from Codex's pass, independently verified by
+  Claude Code by reproducing Python's actual behavior directly: for
+  `{"x-a":"lower","X-A":"upper"}` in either key order, Python's `sorted()`
+  breaks ties on the *value* (not insertion order) because it compares
+  whole `(name, value)` tuples, always keeping `"upper"`; Go was sorting
+  raw (pre-title-case) keys and letting the alphabetically-later raw key
+  win, always keeping `"lower"` — a schema-valid plan could get different
+  authorized header values in worker vs. proxy. Fixed by Codex (dispatched
+  together with the U+007F fix below since both touch `render.go`,
+  verified independently after): header pairs are now sorted by the full
+  `(name, value)` pair matching Python's tuple comparison, with later
+  entries in sorted order overwriting earlier ones for the same name,
+  reproducing Python's `dict()`-after-`sorted()` semantics exactly.
+
+**Low — FIXED**
+- ~~U+007F (DEL) was not escaped by the Go body serializer~~ — Python's
+  `json.dumps(..., ensure_ascii=True)` (the default) escapes it as
+  ``; confirmed directly (`python3 -c "import json;
+  print(json.dumps({'v': chr(0x7f)}))"` → `{"v": ""}`). Go's
+  condition was `char < 0x20 || char > 0x7f`, excluding 0x7F itself. Fixed
+  by Codex alongside the header-collision fix: condition is now
+  `char < 0x20 || char >= 0x7f`.
+
+All four fixes re-verified against a fresh `gate-2a`, `make check`, `make
+conform`, and full `go test ./...` — all green, no regressions.
+
 ### Audit findings — Phase 0 + Phase 1 (2026-09-17) — ALL 11 FIXED
 
 Two independent audit passes (Codex fresh-context + Claude Code, each

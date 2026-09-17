@@ -408,6 +408,34 @@ same fix shape as the earlier `diff.go`/`diff.py` correction. Added
 using the real shape. Re-verified `gate-2a` green after the fix.
 Exit when: fixture proxy tests pass and determinism/denial cases hold. — met.
 
+**Second audit pass (2026-09-17), post-close — 4 more findings, all fixed
+same day:** requested a dedicated 2a audit; Claude Code did an independent
+read + reproduction pass, then dispatched Codex for a second independent
+read-only pass over the same code with no knowledge of the first pass's
+findings. Two findings were caught independently by both: `Authorize`
+always rendered with a `nil` previous-step context even though
+`{{ response.x }}` markers bind to the previous step's output (a real
+fixture, `tests/fixtures/plans/valid/cursor.json`, depends on this for
+pagination) — raised to **High** given Codex's sharper framing: this can
+let a worker's genuinely divergent request coincide with the proxy's
+wrongly-empty re-derivation, not just cause false denials. And the
+`TestNoForbiddenIdentifiers` regex never matched Go-idiomatic camelCase/
+PascalCase names (`SkipVerify`, `IsTrusted`) since `\b` doesn't fire inside
+a camelCase transition — **Medium**, a false security assurance in the
+test itself. Codex's pass also caught two Claude Code missed: header-name
+collisions after title-casing resolve differently in Python (tie-break by
+value after `sorted()`) vs. Go (tie-break by raw key) — **Medium**; and
+U+007F (DEL) wasn't escaped by the Go body serializer though Python's
+`ensure_ascii=True` does escape it — **Low**. All four independently
+verified by Claude Code via direct reproduction before fixing. Fixed the
+response-context gap directly (journal entries now carry a canonical
+`{input, previous}` envelope, digest covers both); dispatched the other
+three to Codex as two bounded tasks (the identifier-detection rewrite
+alone in `proxy_test.go`; the two `render.go` canonicalization fixes
+together, since they share a file). Re-verified `gate-2a`, `make check`,
+`make conform`, full `go test ./...` all green after every fix, no
+regression. See `CHANGELOG.md` for detail.
+
 ### Milestone 2b — Request comparison and denial paths
 
 Deliverables

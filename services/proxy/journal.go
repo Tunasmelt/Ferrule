@@ -10,13 +10,23 @@ import (
 	artifact "ferrule/packages/artifact/go"
 )
 
+// JournalEntry.Context is the canonical envelope {"input": ..., "previous":
+// ...} -- NOT just the raw workflow input. A step's URL/header/body
+// templates can reference {{ response.x }}, which the Python interpreter
+// binds to the PREVIOUS step's mapped output (see interpreter.py's
+// `previous` variable), not the live HTTP response of the current step.
+// Real fixtures already depend on this (tests/fixtures/plans/valid/
+// cursor.json uses "{{ response.next_cursor }}" for pagination). The
+// journal must record both, and the digest must cover both, or the proxy's
+// independent re-render silently diverges from what the worker actually
+// executed the moment a step depends on prior-step output.
 type JournalEntry struct {
-	Input  json.RawMessage
-	Digest string
+	Context json.RawMessage
+	Digest  string
 }
 
 type RunJournal interface {
-	RecordInput(runID string, stepSeq int, input json.RawMessage) (JournalEntry, error)
+	RecordInput(runID string, stepSeq int, input, previous json.RawMessage) (JournalEntry, error)
 	LookupInput(runID string, stepSeq int) (JournalEntry, bool)
 }
 
@@ -34,13 +44,20 @@ func NewMemoryRunJournal() *MemoryRunJournal {
 	return &MemoryRunJournal{entries: make(map[journalKey]JournalEntry)}
 }
 
-func (journal *MemoryRunJournal) RecordInput(runID string, stepSeq int, input json.RawMessage) (JournalEntry, error) {
-	canonical, err := artifact.Canonicalize(input)
+func (journal *MemoryRunJournal) RecordInput(runID string, stepSeq int, input, previous json.RawMessage) (JournalEntry, error) {
+	if len(previous) == 0 {
+		previous = json.RawMessage("{}")
+	}
+	envelope, err := json.Marshal(map[string]json.RawMessage{"input": input, "previous": previous})
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	canonical, err := artifact.Canonicalize(envelope)
 	if err != nil {
 		return JournalEntry{}, err
 	}
 	digest := sha256.Sum256(canonical)
-	entry := JournalEntry{Input: append(json.RawMessage(nil), canonical...), Digest: "sha256:" + hex.EncodeToString(digest[:])}
+	entry := JournalEntry{Context: append(json.RawMessage(nil), canonical...), Digest: "sha256:" + hex.EncodeToString(digest[:])}
 	key := journalKey{runID, stepSeq}
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
@@ -59,6 +76,6 @@ func (journal *MemoryRunJournal) LookupInput(runID string, stepSeq int) (Journal
 }
 
 func cloneEntry(entry JournalEntry) JournalEntry {
-	entry.Input = append(json.RawMessage(nil), entry.Input...)
+	entry.Context = append(json.RawMessage(nil), entry.Context...)
 	return entry
 }

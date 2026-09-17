@@ -118,5 +118,45 @@
     "startedAt": "2026-09-17T17:14:39.306Z",
     "endedAt": "2026-09-17T17:23:33.491Z",
     "note": "codex exec succeeded"
+  },
+  "phase2a-audit-codex": {
+    "milestone": "phase2a-audit-codex",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T19:16:56.724Z",
+    "endedAt": "2026-09-17T19:16:56.789Z",
+    "note": ""
+  },
+  "phase2a-audit": {
+    "milestone": "phase2a-audit",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T19:17:18.259Z",
+    "endedAt": "2026-09-17T19:19:54.209Z",
+    "note": "codex exec succeeded"
+  },
+  "2a-fix-forbidden-identifier-regex": {
+    "milestone": "2a-fix-forbidden-identifier-regex",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T19:40:38.030Z",
+    "endedAt": "2026-09-17T19:44:11.184Z",
+    "note": "codex exec succeeded"
+  },
+  "2a-fix-render-collisions": {
+    "milestone": "2a-fix-render-collisions",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T19:43:06.943Z",
+    "endedAt": "2026-09-17T19:45:06.415Z",
+    "note": "codex exec succeeded"
+  },
+  "phase2a": {
+    "milestone": "phase2a",
+    "owner": "codex",
+    "status": "codex",
+    "startedAt": "2026-09-17T19:43:44.899Z",
+    "endedAt": "2026-09-17T19:44:56.045Z",
+    "note": "done"
   }
 }

@@ -111,13 +111,22 @@ func RenderRequest(step, input, response map[string]any) ([]byte, error) {
 		}
 	}
 	headers := make(map[string]string, len(rawHeaders))
-	rawKeys := make([]string, 0, len(rawHeaders))
-	for key := range rawHeaders {
-		rawKeys = append(rawKeys, key)
+	type headerPair struct {
+		name  string
+		value string
 	}
-	sort.Strings(rawKeys)
-	for _, key := range rawKeys {
-		headers[pythonHeaderName(key)] = rawHeaders[key]
+	pairs := make([]headerPair, 0, len(rawHeaders))
+	for name, value := range rawHeaders {
+		pairs = append(pairs, headerPair{pythonHeaderName(name), value})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].name != pairs[j].name {
+			return pairs[i].name < pairs[j].name
+		}
+		return pairs[i].value < pairs[j].value
+	})
+	for _, pair := range pairs {
+		headers[pair.name] = pair.value
 	}
 	if addContentType {
 		headers["Content-Type"] = "application/json"
@@ -196,7 +205,7 @@ func writePythonString(output *bytes.Buffer, value string) {
 		case '\t':
 			output.WriteString(`\t`)
 		default:
-			if char < 0x20 || char > 0x7f {
+			if char < 0x20 || char >= 0x7f {
 				if char > 0xffff {
 					high, low := utf16.EncodeRune(char)
 					fmt.Fprintf(output, `\u%04x\u%04x`, high, low)
