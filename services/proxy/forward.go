@@ -73,14 +73,18 @@ type ForwardPolicy struct {
 // step A's rendered request while attributing SecurityEvents to step B's
 // identifiers; there is no second identity parameter left to disagree with
 // the Decision.
-func Forward(decision Decision, policy ForwardPolicy, transport Transport) (OutboundResponse, *SecurityEvent, error) {
+func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, store *CredentialStore, transport Transport) (OutboundResponse, *SecurityEvent, error) {
 	if !decision.ChecksPassed {
 		return OutboundResponse{}, nil, errors.New("cannot forward an unauthorized request")
 	}
 	if transport == nil {
 		return OutboundResponse{}, nil, errors.New("transport is nil")
 	}
-	outbound, err := decodeOutboundRequest(decision.RenderedRequest)
+	resolved, secretValues, err := ResolveSecrets(decision.RenderedRequest, bindings, store)
+	if err != nil {
+		return OutboundResponse{}, nil, err
+	}
+	outbound, err := decodeOutboundRequest(resolved)
 	if err != nil {
 		return OutboundResponse{}, nil, fmt.Errorf("decode rendered request: %w", err)
 	}
@@ -133,6 +137,10 @@ func Forward(decision Decision, policy ForwardPolicy, transport Transport) (Outb
 		}
 		if len(policy.AllowedContentTypes) > 0 && !contentTypeAllowed(headerValue(response.Headers, "Content-Type"), policy.AllowedContentTypes) {
 			return forwardDenied(decision, "disallowed_content_type", fmt.Sprintf("response content type %q is not allowed", headerValue(response.Headers, "Content-Type")))
+		}
+		response.Body = Redact(response.Body, secretValues)
+		for name, value := range response.Headers {
+			response.Headers[name] = string(Redact([]byte(value), secretValues))
 		}
 		return response, nil, nil
 	}

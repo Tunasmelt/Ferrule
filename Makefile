@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -41,4 +41,7 @@ gate-2a:
 # per-milestone test binary split yet); the gate is named separately per
 # PHASES.md's convention since it is a distinct milestone checkpoint.
 gate-2b:
+	go test ./services/proxy/...
+
+gate-2c:
 	go test ./services/proxy/...

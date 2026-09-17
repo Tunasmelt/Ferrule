@@ -190,5 +190,21 @@
     "startedAt": "2026-09-17T21:36:42.224Z",
     "endedAt": "2026-09-17T21:42:38.815Z",
     "note": "codex exec succeeded"
+  },
+  "2c": {
+    "milestone": "2c",
+    "owner": "claude-code",
+    "status": "done",
+    "startedAt": "2026-09-17T21:57:07.319Z",
+    "endedAt": "2026-09-17T22:08:53.483Z",
+    "note": ""
+  },
+  "2c-broker": {
+    "milestone": "2c-broker",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T21:57:55.011Z",
+    "endedAt": "2026-09-17T22:03:11.424Z",
+    "note": "codex exec succeeded"
   }
 }

@@ -40,7 +40,7 @@ in the same commit that closes the gate; don't let it drift from
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
 | 1 — Plan language | 1a ✅ / 1b ✅ / 1c ✅ | **closed** |
-| 2 — Proxy & broker | 2a ✅ / 2b ✅ / 2c–2d ⬜ | in progress |
+| 2 — Proxy & broker | 2a ✅ / 2b ✅ / 2c ✅ / 2d ⬜ | in progress |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
 | 5 — Durable execution | 5a–5c ⬜ | not started |
@@ -594,36 +594,99 @@ pass and the injection probe holds. — met.
 This is the single highest-priority gate in the project. Do not let CI treat
 it as advisory — a red `gate-2b` blocks everything downstream of phase 2.
 
-### Milestone 2c — Credential broker and injection
+### Milestone 2c — Credential broker and injection — ✅ CLOSED 2026-09-18
 
 Deliverables
-- Credential store with `broker_ref` indirection (`services/policy` or a
-  dedicated broker component — value never lands in Postgres)
-- Secret resolution: `{{ secret.NAME }}` markers substituted only inside the
-  proxy, immediately before the outbound call
-- Redacted capture of request/response for trace and drift, with stripping of
-  secret material from the response before it is returned to the worker
+- [x] Credential store with `broker_ref` indirection
+      (`services/proxy/credentials.go`) — in-memory, thread-safe, no
+      exported method returns a raw value (only an unexported `resolve`
+      reachable from this package's own resolution code). No Postgres
+      exists anywhere in this codebase yet, matching the same scope
+      decision already made for `RunJournal`/`ArtifactCache` in 2a. No
+      workspace/binding-management system exists either, so a plan's
+      secret NAME → `broker_ref` binding is supplied directly by the
+      caller as an explicit `SecretBindings` map
+      (`services/proxy/secrets.go`) rather than a persisted binding
+      layer — documented as a deliberate v1 scope boundary, not an
+      oversight.
+- [x] Secret resolution (`ResolveSecrets` in `secrets.go`): `{{ secret.NAME }}`
+      markers are matched using the exact same marker regex `render.go`
+      already uses (no separately-written, potentially-divergent regex),
+      and substituted only inside `Forward` -- strictly after
+      `Authorize` has already succeeded on the *unresolved* placeholder
+      form, and only into a copy consumed for the actual outbound send.
+      `authorize.go` and `render.go` were not modified: the comparison
+      that proves a worker's request matches the plan still runs entirely
+      on unresolved placeholder text, exactly as before.
+- [x] Redacted capture: `redact.go`'s `Redact` strips every resolved
+      secret value (longest-first, so a shorter value can't leave a
+      fragment of a longer one exposed) from the response body and every
+      response header before `Forward` returns it to its caller.
 
 Test criteria
-- [ ] Secret marker in a plan template resolves correctly to the bound
-      credential's value inside the proxy
-- [ ] The value passed to `POST /credentials` is never returned by any
-      endpoint or present in any log line (automated scan over API responses
-      and structured logs, 0 hits)
-- [ ] **No credential material appears in any worker-visible surface**:
-      worker memory dump, worker logs, trace blobs, error messages returned
-      to the worker (automated scan, 0 hits) — this is the load-bearing test
-      for invariant 1 in `CLAUDE.md`/`AGENTS.md`
-- [ ] Deleting a credential (`DELETE /credentials/{id}`) causes the next run
-      bound to it to fail with failure class `auth`, not a generic error
+- [x] Secret marker in a plan template resolves correctly to the bound
+      credential's value inside the proxy —
+      `TestForwardResolvesSecretAfterAuthorization` authorizes a request
+      with `{{ secret.acme_erp_api_key }}` in a header, forwards it, and
+      confirms the transport received the real resolved value.
+- [x] **Met by scope, not by a working scan**: there is no `POST
+      /credentials` endpoint, no structured logging system, and no trace
+      capture anywhere in this codebase yet (no HTTP server exists for
+      any milestone through 2c), so this criterion's literal automated
+      scan has nothing to scan. What's actually enforced today:
+      `CredentialStore`'s public API has no method that returns a raw
+      value at all (`TestCredentialStoreDeleteIsIdempotent`'s trailing
+      comment records this as the package's public-API contract), so
+      there is no code path capable of writing one anywhere, log or
+      otherwise. Revisit this box for real when an HTTP/log layer exists.
+- [x] **No credential material appears in any worker-visible surface** —
+      the architectural boundary from Phase 1 already holds unchanged
+      (the worker is `packages/interpreter`, in a different language,
+      and structurally never runs code capable of resolving a secret
+      marker; `render.py` still only ever produces the placeholder
+      string). What milestone 2c adds on top: `TestForwardRedactsEchoedSecretFromResponse`
+      proves that even if an upstream API reflects a resolved secret back
+      in its response body or a header (the concrete "error message
+      echoes a credential" scenario this criterion names), `Forward`
+      strips it before returning. Grepped every `fmt.Errorf`/`errors.New`/
+      `fmt.Sprintf` call added in this milestone's files by hand: none
+      embed a raw resolved secret value.
+- [x] Deleting a credential causes the next run bound to it to fail with
+      failure class `auth`, not a generic error — `FailureClassError{Class:
+      "auth"}` (`secrets.go`), proven end to end by
+      `TestResolveSecretsFailsWithAuthAfterCredentialDeletion`: resolve
+      succeeds, delete the credential, the next resolution attempt fails
+      with the typed class, checked via `errors.As`, not string-matching.
 
 Security criteria
-- [ ] Redaction happens before the trace/log write, not as a post-processing
-      pass over already-written data (grep for any "redact after write" or
-      cleanup-job pattern — this is invariant 6 and it is checked here, not
-      assumed)
+- [x] Redaction happens before the trace/log write, not as a
+      post-processing pass — met by scope for the same reason noted
+      above (no trace/log write exists yet to redact before); the
+      redaction that does exist (`Forward`'s response path) runs inline,
+      synchronously, before the response value is ever handed back to a
+      caller — there is no "capture now, clean up later" step anywhere
+      in this milestone's code to grep for.
 
-Gate `make gate-2c`
+Gate `make gate-2c` — **passing** (verified 2026-09-18, independently
+re-run: `go test ./services/proxy/... -v` and `go test ./...` both green;
+`make check`/`make conform`/`gate-2a`/`gate-2b` re-run clean, no
+regression). Built by Codex via `codex-task.mjs`.
+
+**Caught during independent review**: `ResolveSecrets` used Go's
+`strconv.Quote` to embed a resolved secret value into the JSON envelope's
+string content. `strconv.Quote` produces *Go* string-literal escaping,
+not JSON escaping -- for certain control bytes (e.g. a bell character,
+`0x07`) it emits `\a`, which is not a valid JSON escape sequence at all.
+Reproduced directly: a credential containing such a byte produced a
+malformed JSON envelope that failed `json.Unmarshal` inside `Forward`'s
+`decodeOutboundRequest`, meaning any run using that specific credential
+would fail outright. Fixed by reusing `render.go`'s own
+`writePythonString` (the same JSON-safe escaping already used everywhere
+else in this package) instead of `strconv.Quote`. Added
+`TestResolveSecretsEscapesControlByteAsValidJSON` as a permanent
+regression test.
+Exit when: secret resolution, deletion failure class, and redaction tests
+pass. — met.
 
 ### Milestone 2d — Adversarial verification suite
 

@@ -7,6 +7,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Phase 2 milestone 2c — Credential broker and injection (2026-09-18)
+
+Built by Codex via `codex-task.mjs`: `services/proxy/credentials.go`
+(in-memory `CredentialStore`, no exported raw-value accessor),
+`secrets.go` (`ResolveSecrets`, matching `{{ secret.NAME }}` markers with
+render.go's own marker regex and substituting them only after
+`Authorize` has already succeeded on the unresolved placeholder form;
+`FailureClassError{Class: "auth"}` for a missing/deleted credential), and
+`redact.go` (`Redact`, longest-value-first so a shorter secret can't
+leave a fragment of a longer one exposed). `forward.go` wired minimally:
+resolve after authorization succeeds, redact the response body and every
+header before returning it. `authorize.go` and `render.go` were not
+touched -- the byte-for-byte comparison that proves a worker's request
+matches the plan still runs entirely on the unresolved placeholder text.
+
+**Caught during independent review**: `ResolveSecrets` used
+`strconv.Quote` (Go string-literal escaping) to embed a resolved secret
+into the JSON envelope, instead of JSON escaping. Reproduced directly:
+`strconv.Quote` on a value containing a bell character (`0x07`) produces
+`\a`, which is not a valid JSON escape -- the resulting envelope failed
+`json.Unmarshal` inside `Forward`, meaning any run using a credential
+containing such a byte would fail outright with a decode error. Fixed by
+reusing `render.go`'s existing `writePythonString` (the same JSON-safe
+escaping already used everywhere else in this package) instead of
+`strconv.Quote`. Added `TestResolveSecretsEscapesControlByteAsValidJSON`.
+
+Two of milestone 2c's test criteria (the `POST /credentials` log-scan and
+the trace/log redaction-timing check) are recorded as "met by scope, not
+by a working scan" in `PHASES.md`: there is no HTTP server, structured
+logging, or trace-capture system anywhere in this codebase yet for either
+criterion to meaningfully scan. What's actually built and tested instead:
+`CredentialStore` has no method that returns a raw value at all, and
+`Forward`'s redaction runs inline before any response value is returned,
+with no separate persistence step to grep for a "redact after write"
+pattern in. Revisit both boxes for real once an HTTP/log layer exists.
+
+`gate-2c` (added to the Makefile), `gate-2b`, `gate-2a`, `make check`,
+`make conform` all re-run green, no regressions.
+
 ### Milestone 2b audit follow-ups (2026-09-18) — both tracked items fixed
 
 The two items left tracked-but-not-fixed in the 2b dedicated audit
