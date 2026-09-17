@@ -78,5 +78,37 @@
     "startedAt": "2026-09-17T15:22:37.762Z",
     "endedAt": "2026-09-17T15:30:43.466Z",
     "note": "codex exec succeeded"
+  },
+  "0c-fix-plan-diff": {
+    "milestone": "0c-fix-plan-diff",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:53:30.770Z",
+    "endedAt": "2026-09-17T16:00:42.100Z",
+    "note": "codex exec succeeded"
+  },
+  "0a-fix-duplicate-keys": {
+    "milestone": "0a-fix-duplicate-keys",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:53:55.756Z",
+    "endedAt": "2026-09-17T15:59:56.587Z",
+    "note": "codex exec succeeded"
+  },
+  "0b-fix-keygen-toctou": {
+    "milestone": "0b-fix-keygen-toctou",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:54:02.366Z",
+    "endedAt": "2026-09-17T16:00:29.120Z",
+    "note": "codex exec succeeded"
+  },
+  "1c-fix-interpreter-mediums": {
+    "milestone": "1c-fix-interpreter-mediums",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T15:54:09.837Z",
+    "endedAt": "2026-09-17T16:00:39.530Z",
+    "note": "codex exec succeeded"
   }
 }

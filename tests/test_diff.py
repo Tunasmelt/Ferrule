@@ -116,6 +116,79 @@ class DiffTests(unittest.TestCase):
             self.result(4),
         )
 
+    def test_plan_step_reorder_is_visible_but_not_breaking(self) -> None:
+        old = {"plan": {"steps": [{"id": "a"}, {"id": "b"}]}}
+        new = {"plan": {"steps": [{"id": "b"}, {"id": "a"}]}}
+
+        result = diff(old, new)
+
+        self.assertEqual(
+            [{"field": "order", "from": ["a", "b"], "to": ["b", "a"]}],
+            result["plan_changes"],
+        )
+        self.assertEqual([], result["schema_changes"])
+        self.assertEqual([], result["capability_changes"])
+        self.assertIs(result["breaking"], False)
+
+    def test_plan_level_hosts_change_is_visible(self) -> None:
+        old = {"plan": {"hosts": ["api.example"], "steps": [{"id": "a"}]}}
+        new = {
+            "plan": {
+                "hosts": ["api.example", "uploads.example"],
+                "steps": [{"id": "a"}],
+            }
+        }
+
+        result = diff(old, new)
+
+        self.assertEqual(
+            [
+                {
+                    "field": "hosts",
+                    "from": ["api.example"],
+                    "to": ["api.example", "uploads.example"],
+                }
+            ],
+            result["plan_changes"],
+        )
+
+    def test_bare_plan_document_hosts_change_is_visible(self) -> None:
+        # Milestone 1a's actual plan document shape: "hosts" and "steps"
+        # both live at the TOP level, with no "plan" wrapper key at all.
+        # This is the shape the original audit finding reproduced against
+        # (distinct from a full node manifest's nested plan.steps, and from
+        # a hypothetical "hosts nested inside plan" shape that doesn't
+        # actually occur anywhere in this codebase).
+        old = {"hosts": ["api.example"], "steps": [{"id": "a"}]}
+        new = {"hosts": ["api.example", "uploads.example"], "steps": [{"id": "a"}]}
+
+        result = diff(old, new)
+
+        self.assertEqual(
+            [{"field": "hosts", "from": ["api.example"], "to": ["api.example", "uploads.example"]}],
+            result["plan_changes"],
+        )
+        self.assertIs(result["breaking"], False)
+
+    def test_duplicate_step_id_is_visible(self) -> None:
+        old = {"plan": {"steps": [{"id": "a"}, {"id": "a"}]}}
+        new = {"plan": {"steps": [{"id": "a"}]}}
+
+        result = diff(old, new)
+
+        self.assertEqual(
+            [
+                {
+                    "step": "a",
+                    "field": "id",
+                    "change": "duplicate",
+                    "from": 2,
+                    "to": 1,
+                }
+            ],
+            result["plan_changes"],
+        )
+
     def test_existing_field_becoming_required_is_breaking(self) -> None:
         old: dict[str, object] = {
             "type": "object",

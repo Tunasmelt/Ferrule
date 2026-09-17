@@ -45,6 +45,13 @@ class CanonicalizationTests(unittest.TestCase):
             with self.subTest(token=token), self.assertRaises(CanonicalizationError):
                 canonicalize(b'{"number":' + token + b"}")
 
+    def test_rejects_duplicate_object_keys(self) -> None:
+        for value in (b'{"x":1,"x":2}', b'{"a":{"x":1,"x":2}}'):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                CanonicalizationError, 'duplicate object key: "x"'
+            ):
+                canonicalize(value)
+
 
 if __name__ == "__main__":
     unittest.main()

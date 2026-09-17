@@ -61,6 +61,67 @@ func TestDiffClassifiesRequiredAndOptionalAdditions(t *testing.T) {
 	}
 }
 
+func TestDiffPlanStepReorderIsVisibleButNotBreaking(t *testing.T) {
+	result, err := Diff(
+		map[string]any{"plan": map[string]any{"steps": []any{map[string]any{"id": "a"}, map[string]any{"id": "b"}}}},
+		map[string]any{"plan": map[string]any{"steps": []any{map[string]any{"id": "b"}, map[string]any{"id": "a"}}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ValueChange{{Field: "order", From: []string{"a", "b"}, To: []string{"b", "a"}}}
+	if !reflect.DeepEqual(result.PlanChanges, want) || len(result.SchemaChanges) != 0 || len(result.CapabilityChanges) != 0 || result.Breaking {
+		t.Fatalf("unexpected reorder result: %#v", result)
+	}
+}
+
+func TestDiffPlanHostsChangeIsVisible(t *testing.T) {
+	result, err := Diff(
+		map[string]any{"plan": map[string]any{"hosts": []any{"api.example"}, "steps": []any{map[string]any{"id": "a"}}}},
+		map[string]any{"plan": map[string]any{"hosts": []any{"api.example", "uploads.example"}, "steps": []any{map[string]any{"id": "a"}}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ValueChange{{Field: "hosts", From: []any{"api.example"}, To: []any{"api.example", "uploads.example"}}}
+	if !reflect.DeepEqual(result.PlanChanges, want) {
+		t.Fatalf("unexpected hosts result: %#v", result)
+	}
+}
+
+func TestDiffBarePlanDocumentHostsChangeIsVisible(t *testing.T) {
+	// Milestone 1a's actual plan document shape: "hosts" and "steps" both
+	// live at the TOP level, with no "plan" wrapper key at all -- distinct
+	// from a full node manifest's nested plan.steps, and from a
+	// hypothetical "hosts nested inside plan" shape that doesn't actually
+	// occur anywhere in this codebase.
+	result, err := Diff(
+		map[string]any{"hosts": []any{"api.example"}, "steps": []any{map[string]any{"id": "a"}}},
+		map[string]any{"hosts": []any{"api.example", "uploads.example"}, "steps": []any{map[string]any{"id": "a"}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ValueChange{{Field: "hosts", From: []any{"api.example"}, To: []any{"api.example", "uploads.example"}}}
+	if !reflect.DeepEqual(result.PlanChanges, want) || result.Breaking {
+		t.Fatalf("unexpected bare-plan hosts result: %#v", result)
+	}
+}
+
+func TestDiffDuplicateStepIDIsVisible(t *testing.T) {
+	result, err := Diff(
+		map[string]any{"plan": map[string]any{"steps": []any{map[string]any{"id": "a"}, map[string]any{"id": "a"}}}},
+		map[string]any{"plan": map[string]any{"steps": []any{map[string]any{"id": "a"}}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ValueChange{{Step: "a", Field: "id", Change: "duplicate", From: 2, To: 1}}
+	if !reflect.DeepEqual(result.PlanChanges, want) {
+		t.Fatalf("unexpected duplicate result: %#v", result)
+	}
+}
+
 func schemaResult(t *testing.T, oldPort, newPort map[string]any) DiffResult {
 	t.Helper()
 	result, err := Diff(

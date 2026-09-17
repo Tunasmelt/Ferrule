@@ -20,8 +20,8 @@ func Canonicalize(input []byte) ([]byte, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := decodeValue(decoder)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNonCanonical, err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
@@ -35,6 +35,51 @@ func Canonicalize(input []byte) ([]byte, error) {
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+func decodeValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return token, nil
+	}
+	switch delimiter {
+	case '{':
+		value := make(map[string]any)
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key := keyToken.(string)
+			if _, exists := value[key]; exists {
+				return nil, fmt.Errorf("duplicate object key: %q", key)
+			}
+			item, err := decodeValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			value[key] = item
+		}
+		_, err = decoder.Token()
+		return value, err
+	case '[':
+		value := make([]any, 0)
+		for decoder.More() {
+			item, err := decodeValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			value = append(value, item)
+		}
+		_, err = decoder.Token()
+		return value, err
+	default:
+		return nil, fmt.Errorf("unexpected delimiter %q", delimiter)
+	}
 }
 
 func encode(output *bytes.Buffer, value any) error {

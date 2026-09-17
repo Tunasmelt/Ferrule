@@ -204,18 +204,59 @@ def _leaf_changes(
 
 
 def _plan_changes(old: dict[str, object], new: dict[str, object]) -> list[Change]:
-    def steps(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
-        values = _object(manifest.get("plan")).get("steps")
+    def steps(
+        plan: dict[str, object],
+    ) -> tuple[dict[str, dict[str, object]], list[str], dict[str, int]]:
+        values = plan.get("steps")
         if not isinstance(values, list):
-            return {}
-        return {
-            step["id"]: step
-            for step in values
-            if isinstance(step, dict) and isinstance(step.get("id"), str)
-        }
+            return {}, [], {}
+        by_id: dict[str, dict[str, object]] = {}
+        order: list[str] = []
+        counts: dict[str, int] = {}
+        for step in values:
+            if isinstance(step, dict) and isinstance(step.get("id"), str):
+                step_id = step["id"]
+                by_id[step_id] = step
+                order.append(step_id)
+                counts[step_id] = counts.get(step_id, 0) + 1
+        return by_id, order, counts
 
-    old_steps, new_steps = steps(old), steps(new)
-    result: list[Change] = []
+    # A full node manifest nests steps under "plan"; a bare plan document
+    # (milestone 1a's shape) has "steps" at its own top level instead, with
+    # no "plan" wrapper at all -- fields like "hosts" live there directly.
+    # Treat the document itself as the plan sub-object when no "plan" key
+    # exists, so "fields other than steps" comparison still finds them.
+    old_plan = old["plan"] if isinstance(old.get("plan"), dict) else old
+    new_plan = new["plan"] if isinstance(new.get("plan"), dict) else new
+    old_plan, new_plan = _object(old_plan), _object(new_plan)
+    old_steps, old_order, old_counts = steps(old_plan)
+    new_steps, new_order, new_counts = steps(new_plan)
+    result = [
+        {"field": field, "from": before, "to": after}
+        for field, before, after in _leaf_changes(
+            {key: value for key, value in old_plan.items() if key != "steps"},
+            {key: value for key, value in new_plan.items() if key != "steps"},
+        )
+    ]
+    common = old_steps.keys() & new_steps.keys()
+    # Plan-level changes omit "step"; order reports each shared ID once so
+    # additions/removals and duplicate-ID findings remain separate changes.
+    old_common = list(dict.fromkeys(step for step in old_order if step in common))
+    new_common = list(dict.fromkeys(step for step in new_order if step in common))
+    if old_common != new_common:
+        result.append({"field": "order", "from": old_common, "to": new_common})
+    for step_id in sorted(old_counts.keys() | new_counts.keys()):
+        old_count, new_count = old_counts.get(step_id, 0), new_counts.get(step_id, 0)
+        if old_count > 1 or new_count > 1:
+            result.append(
+                {
+                    "step": step_id,
+                    "field": "id",
+                    "change": "duplicate",
+                    "from": old_count,
+                    "to": new_count,
+                }
+            )
     for step_id in sorted(old_steps.keys() | new_steps.keys()):
         old_step = {
             key: value

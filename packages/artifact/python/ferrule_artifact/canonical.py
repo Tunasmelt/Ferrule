@@ -11,6 +11,15 @@ def _reject_constant(token: str) -> None:
     raise CanonicalizationError(f"non-finite number: {token}")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CanonicalizationError(f'duplicate object key: "{key}"')
+        result[key] = value
+    return result
+
+
 def _number(value: int | float | Decimal) -> str:
     if isinstance(value, int):
         return str(value)
@@ -56,6 +65,7 @@ def canonicalize(value: object | bytes | str) -> bytes:
                 parse_float=Decimal,
                 parse_int=Decimal,
                 parse_constant=_reject_constant,
+                object_pairs_hook=_reject_duplicate_keys,
             )
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise CanonicalizationError(str(error)) from error

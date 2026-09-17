@@ -2,9 +2,11 @@ package artifact
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +42,15 @@ func TestRejectsNonFiniteNumbers(t *testing.T) {
 	for _, input := range []string{`{"n":NaN}`, `{"n":Infinity}`, `{"n":-Infinity}`} {
 		if _, err := Canonicalize([]byte(input)); err == nil {
 			t.Errorf("Canonicalize(%q) succeeded", input)
+		}
+	}
+}
+
+func TestRejectsDuplicateObjectKeys(t *testing.T) {
+	for _, input := range []string{`{"x":1,"x":2}`, `{"a":{"x":1,"x":2}}`} {
+		_, err := Canonicalize([]byte(input))
+		if !errors.Is(err, ErrNonCanonical) || !strings.Contains(err.Error(), `duplicate object key: "x"`) {
+			t.Errorf("Canonicalize(%q) error = %v", input, err)
 		}
 	}
 }

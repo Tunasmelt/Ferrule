@@ -12,9 +12,15 @@ sys.path.insert(0, str(ROOT / "packages" / "plan-schema" / "python"))
 from ferrule_interpreter import (  # noqa: E402
     PlanRejected,
     Response,
+    ResponseTooLargeError,
     UndeclaredHostError,
     classify_plan,
     run,
+)
+from ferrule_interpreter.interpreter import (  # noqa: E402
+    MAX_RESPONSE_BODY_BYTES,
+    _http,
+    _request,
 )
 from ferrule_interpreter.mock import FixtureServer  # noqa: E402
 from ferrule_plan_schema import validate_schema  # noqa: E402
@@ -100,6 +106,62 @@ class InterpreterTests(unittest.TestCase):
         result = run(plan, {}, transport=transport)
         self.assertEqual({"route": "ok", "output": {"names": ["bulbasaur", "ivysaur"]}}, result)
         self.assertEqual(2, len(requests))
+
+    def test_oversized_response_is_rejected_before_json_parsing(self) -> None:
+        class RawResponse:
+            status = 200
+
+            def read(self, amount: int) -> bytes:
+                self.amount = amount
+                return b"{" * amount
+
+            def getheaders(self) -> list[tuple[str, str]]:
+                return []
+
+        class Connection:
+            raw = RawResponse()
+
+            def request(self, method: str, target: str, body: bytes | None, headers: dict[str, str]) -> None:
+                del method, target, body, headers
+
+            def getresponse(self) -> RawResponse:
+                return self.raw
+
+            def close(self) -> None:
+                pass
+
+        request = _request(
+            {"method": "GET", "url": "https://example.com", "headers": {}},
+            {}, {}, {"example.com"},
+        )
+        with patch("ferrule_interpreter.interpreter.http.client.HTTPSConnection", return_value=Connection()):
+            with self.assertRaisesRegex(ResponseTooLargeError, "1048576 bytes"):
+                _http(request)
+        self.assertEqual(MAX_RESPONSE_BODY_BYTES + 1, Connection.raw.amount)
+
+    def test_request_rendering_is_canonical(self) -> None:
+        first = {
+            "method": "GET", "url": "https://example.com/items?z=0",
+            "headers": {"x-foo-bar": "a", "ACCEPT": "application/json"},
+            "query": {"b": "2", "a": "1"},
+        }
+        second = {
+            "method": "GET", "url": "https://example.com/items?z=0",
+            "headers": {"accept": "application/json", "X-FOO-BAR": "a"},
+            "query": {"a": "1", "b": "2"},
+        }
+        rendered_first = _request(first, {}, {}, {"example.com"})
+        rendered_second = _request(second, {}, {}, {"example.com"})
+        self.assertEqual(rendered_first, rendered_second)
+        self.assertEqual("https://example.com/items?a=1&b=2&z=0", rendered_first.url)
+        self.assertEqual({"Accept": "application/json", "X-Foo-Bar": "a"}, rendered_first.headers)
+
+    def test_crlf_header_is_rejected_as_plan_error(self) -> None:
+        plan = json.loads((self.fixtures / "plans" / "execution" / "github-repo.json").read_text())
+        plan["steps"][0]["headers"] = {"X-Input": "{{ input.value }}"}
+        with self.assertRaisesRegex(PlanRejected, "invalid HTTP request") as raised:
+            run(plan, {"value": "safe\r\nInjected: true"})
+        self.assertNotEqual(ValueError, type(raised.exception))
 
     def test_coverage_artifact_has_all_plans(self) -> None:
         records = json.loads((self.fixtures / "plans" / "coverage.json").read_text())

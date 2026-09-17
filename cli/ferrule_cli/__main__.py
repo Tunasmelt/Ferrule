@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,16 @@ from ferrule_plan_schema import check
 
 def _input(path: Path | None) -> bytes:
     return path.read_bytes() if path else sys.stdin.buffer.read()
+
+
+def _write_exclusive(path: Path, contents: bytes, mode: int) -> None:
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(contents)
+    except OSError:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def main() -> int:
@@ -80,12 +91,24 @@ def main() -> int:
             args.directory.mkdir(parents=True, exist_ok=True)
             private_path = args.directory / "dev-private.pem"
             public_path = args.directory / "dev-public.pem"
-            if private_path.exists() or public_path.exists():
-                parser.error("refusing to overwrite an existing dev keypair")
             private_key, public_key = generate_dev_keypair()
-            private_path.write_bytes(private_key)
-            private_path.chmod(0o600)
-            public_path.write_bytes(public_key)
+            try:
+                _write_exclusive(private_path, private_key, 0o600)
+            except FileExistsError:
+                parser.error("refusing to overwrite an existing dev keypair")
+            try:
+                _write_exclusive(public_path, public_key, 0o644)
+            except OSError as public_error:
+                try:
+                    private_path.unlink()
+                except OSError as cleanup_error:
+                    parser.error(
+                        f"{public_error}; private key remains at {private_path}: "
+                        f"{cleanup_error}"
+                    )
+                if isinstance(public_error, FileExistsError):
+                    parser.error("refusing to overwrite an existing dev keypair")
+                raise
             print(f"development-only keypair written to {args.directory}")
             return 0
 

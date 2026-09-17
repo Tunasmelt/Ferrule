@@ -23,6 +23,51 @@ func input(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
+func writeExclusive(path string, contents []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(contents); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func keygen(directory string) error {
+	privatePEM, publicPEM, err := artifact.GenerateDevKeypairPEM()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return err
+	}
+	privatePath := filepath.Join(directory, "dev-private.pem")
+	publicPath := filepath.Join(directory, "dev-public.pem")
+	if err := writeExclusive(privatePath, privatePEM, 0600); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("refusing to overwrite %s", privatePath)
+		}
+		return err
+	}
+	if err := writeExclusive(publicPath, publicPEM, 0644); err != nil {
+		if cleanupErr := os.Remove(privatePath); cleanupErr != nil {
+			return fmt.Errorf("%v; private key remains at %s: %v", err, privatePath, cleanupErr)
+		}
+		if os.IsExist(err) {
+			return fmt.Errorf("refusing to overwrite %s", publicPath)
+		}
+		return err
+	}
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fail(fmt.Errorf("usage: artifact build|hash|sign|verify|keygen"))
@@ -36,25 +81,7 @@ func main() {
 		fail(err)
 	}
 	if command == "keygen" {
-		privatePEM, publicPEM, err := artifact.GenerateDevKeypairPEM()
-		if err != nil {
-			fail(err)
-		}
-		if err := os.MkdirAll(*directory, 0700); err != nil {
-			fail(err)
-		}
-		privatePath := filepath.Join(*directory, "dev-private.pem")
-		publicPath := filepath.Join(*directory, "dev-public.pem")
-		if _, err := os.Stat(privatePath); err == nil {
-			fail(fmt.Errorf("refusing to overwrite %s", privatePath))
-		}
-		if _, err := os.Stat(publicPath); err == nil {
-			fail(fmt.Errorf("refusing to overwrite %s", publicPath))
-		}
-		if err := os.WriteFile(privatePath, privatePEM, 0600); err != nil {
-			fail(err)
-		}
-		if err := os.WriteFile(publicPath, publicPEM, 0644); err != nil {
+		if err := keygen(*directory); err != nil {
 			fail(err)
 		}
 		fmt.Println("development-only keypair written to", *directory)

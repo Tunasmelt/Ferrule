@@ -11,8 +11,16 @@ from ferrule_plan_schema import check, compile_expression, evaluate
 
 from .render import render
 
+# Matches the 1 MiB default runtime limit in SPEC.md section 5 while bounding
+# each response independently, including every pagination page.
+MAX_RESPONSE_BODY_BYTES = 1_048_576
+
 
 class PlanRejected(ValueError):
+    pass
+
+
+class ResponseTooLargeError(ValueError):
     pass
 
 
@@ -45,11 +53,18 @@ def _http(request: Request) -> Response:
     connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
     connection = connection_type(parsed.hostname, parsed.port, timeout=10)
     target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-    connection.request(request.method, target, body=request.body, headers=request.headers)
-    raw = connection.getresponse()
-    data = raw.read()
-    headers = {name.lower(): value for name, value in raw.getheaders()}
-    connection.close()
+    try:
+        try:
+            connection.request(request.method, target, body=request.body, headers=request.headers)
+        except ValueError as exc:
+            raise PlanRejected("invalid HTTP request headers or target") from exc
+        raw = connection.getresponse()
+        data = raw.read(MAX_RESPONSE_BODY_BYTES + 1)
+        if len(data) > MAX_RESPONSE_BODY_BYTES:
+            raise ResponseTooLargeError(f"response body exceeds {MAX_RESPONSE_BODY_BYTES} bytes")
+        headers = {name.lower(): value for name, value in raw.getheaders()}
+    finally:
+        connection.close()
     try:
         body: object = json.loads(data) if data else {}
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -69,19 +84,26 @@ def _request(step: Mapping[str, object], input_value: dict[str, object], previou
         if host is None or host.lower() not in declared_hosts:
             displayed_host = host if host is not None else "<missing>"
             raise UndeclaredHostError(f"pagination URL host {displayed_host!r} is not declared in plan hosts")
-    headers = {str(k): render(str(v), input_value, previous) for k, v in cast(Mapping[object, object], step["headers"]).items()}
+    rendered_headers = {
+        str(k): render(str(v), input_value, previous)
+        for k, v in cast(Mapping[object, object], step["headers"]).items()
+    }
     query = {str(k): render(str(v), input_value, previous) for k, v in cast(Mapping[object, object], step.get("query", {})).items()}
     rendered_url = url or render(cast(str, step["url"]), input_value, previous)
     parsed = urlsplit(rendered_url)
     merged = dict(parse_qsl(parsed.query, keep_blank_values=True))
     if url is None:
         merged.update(query)
-    rendered_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(merged), ""))
+    rendered_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(sorted(merged.items())), ""))
     body_value = step.get("body")
     body = None
     if isinstance(body_value, Mapping):
         body = json.dumps({str(k): render(str(v), input_value, previous) for k, v in body_value.items()}, sort_keys=True, separators=(",", ":")).encode()
-        headers.setdefault("Content-Type", "application/json")
+        rendered_headers.setdefault("Content-Type", "application/json")
+    # Title-case each segment and sort names for deterministic HTTP rendering.
+    headers = dict(sorted(
+        (("-".join(part.capitalize() for part in name.split("-")), value) for name, value in rendered_headers.items()),
+    ))
     return Request(cast(str, step["method"]), rendered_url, headers, body)
 
 

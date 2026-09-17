@@ -26,10 +26,11 @@ type SchemaChange struct {
 var constraints = []string{"enum", "const", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "additionalProperties"}
 
 type ValueChange struct {
-	Step  string `json:"step,omitempty"`
-	Field string `json:"field"`
-	From  any    `json:"from"`
-	To    any    `json:"to"`
+	Step   string `json:"step,omitempty"`
+	Field  string `json:"field"`
+	Change string `json:"change,omitempty"`
+	From   any    `json:"from"`
+	To     any    `json:"to"`
 }
 
 type DiffResult struct {
@@ -297,21 +298,39 @@ func leafChanges(old map[string]any, new map[string]any, prefix string) []ValueC
 	return changes
 }
 
-func planSteps(value any) map[string]map[string]any {
+func planSteps(value any) (map[string]map[string]any, []string, map[string]int) {
 	result := map[string]map[string]any{}
+	order := []string{}
+	counts := map[string]int{}
 	steps, _ := object(value)["steps"].([]any)
 	for _, raw := range steps {
 		step := object(raw)
 		id, ok := step["id"].(string)
 		if ok {
 			result[id] = step
+			order = append(order, id)
+			counts[id]++
 		}
 	}
-	return result
+	return result, order, counts
 }
 
 func planDiff(old, new map[string]any) []ValueChange {
-	oldSteps, newSteps := planSteps(old["plan"]), planSteps(new["plan"])
+	// A full node manifest nests steps under "plan"; a bare plan document
+	// (milestone 1a's shape) has "steps" at its own top level instead, with
+	// no "plan" wrapper at all -- fields like "hosts" live there directly.
+	// Treat the document itself as the plan sub-object when no "plan" key
+	// exists, so "fields other than steps" comparison still finds them.
+	oldRoot, newRoot := old["plan"], new["plan"]
+	if _, ok := oldRoot.(map[string]any); !ok {
+		oldRoot = old
+	}
+	if _, ok := newRoot.(map[string]any); !ok {
+		newRoot = new
+	}
+	oldPlan, newPlan := object(oldRoot), object(newRoot)
+	oldSteps, oldOrder, oldCounts := planSteps(oldPlan)
+	newSteps, newOrder, newCounts := planSteps(newPlan)
 	oldKeys, newKeys := map[string]any{}, map[string]any{}
 	for key := range oldSteps {
 		oldKeys[key] = nil
@@ -319,7 +338,46 @@ func planDiff(old, new map[string]any) []ValueChange {
 	for key := range newSteps {
 		newKeys[key] = nil
 	}
-	result := []ValueChange{}
+	oldTop, newTop := map[string]any{}, map[string]any{}
+	for key, value := range oldPlan {
+		if key != "steps" {
+			oldTop[key] = value
+		}
+	}
+	for key, value := range newPlan {
+		if key != "steps" {
+			newTop[key] = value
+		}
+	}
+	result := leafChanges(oldTop, newTop, "")
+	// Plan-level changes omit Step; order reports each shared ID once so
+	// additions/removals and duplicate-ID findings remain separate changes.
+	commonOrder := func(order []string, other map[string]map[string]any) []string {
+		result, seen := []string{}, map[string]bool{}
+		for _, id := range order {
+			if _, exists := other[id]; exists && !seen[id] {
+				result = append(result, id)
+				seen[id] = true
+			}
+		}
+		return result
+	}
+	oldCommon, newCommon := commonOrder(oldOrder, newSteps), commonOrder(newOrder, oldSteps)
+	if !reflect.DeepEqual(oldCommon, newCommon) {
+		result = append(result, ValueChange{Field: "order", From: oldCommon, To: newCommon})
+	}
+	oldCountKeys, newCountKeys := map[string]any{}, map[string]any{}
+	for id := range oldCounts {
+		oldCountKeys[id] = nil
+	}
+	for id := range newCounts {
+		newCountKeys[id] = nil
+	}
+	for _, id := range sortedUnion(oldCountKeys, newCountKeys) {
+		if oldCounts[id] > 1 || newCounts[id] > 1 {
+			result = append(result, ValueChange{Step: id, Field: "id", Change: "duplicate", From: oldCounts[id], To: newCounts[id]})
+		}
+	}
 	for _, id := range sortedUnion(oldKeys, newKeys) {
 		oldStep, newStep := map[string]any{}, map[string]any{}
 		for key, value := range oldSteps[id] {

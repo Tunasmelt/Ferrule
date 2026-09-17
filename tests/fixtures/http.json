@@ -14,7 +14,7 @@
   "GET jsonplaceholder.typicode.com/posts/1":{"status":200,"body":{"title":"hello","userId":1}},
   "GET jsonplaceholder.typicode.com/users/1":{"status":200,"body":{"name":"Leanne","address":{"city":"Gwenborough"}}},
   "GET jsonplaceholder.typicode.com/posts/999":{"status":404,"body":{}},
-  "GET geocoding-api.open-meteo.com/v1/search?name=Dubai&count=1":{"status":200,"body":{"results":[{"name":"Dubai","latitude":25.2048}]}},
-  "GET geocoding-api.open-meteo.com/v1/search?name=Nowhere&count=1":{"status":200,"body":{"results":[]}},
-  "GET geocoding-api.open-meteo.com/v1/search?name=RateLimit&count=1":{"status":429,"body":{"reason":"Hourly API request limit exceeded."}}
+  "GET geocoding-api.open-meteo.com/v1/search?count=1&name=Dubai":{"status":200,"body":{"results":[{"name":"Dubai","latitude":25.2048}]}},
+  "GET geocoding-api.open-meteo.com/v1/search?count=1&name=Nowhere":{"status":200,"body":{"results":[]}},
+  "GET geocoding-api.open-meteo.com/v1/search?count=1&name=RateLimit":{"status":429,"body":{"reason":"Hourly API request limit exceeded."}}
 }
