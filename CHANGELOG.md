@@ -7,6 +7,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Known issues — Phase 0 + Phase 1 audit findings (2026-09-17, not yet fixed)
+
+Two independent audit passes (Codex fresh-context + Claude Code, each
+verifying the other's and its own findings by direct reproduction, not
+just static reading) found 11 real issues across Phase 0 and Phase 1.
+Deliberately deferred — fix before or during Phase 2 work, not blocking
+Phase 1's closure since all 11 are pre-existing gaps in already-gated code,
+not new regressions.
+
+**High**
+- Pagination continuation in the interpreter follows a response-supplied
+  `next` URL (`offset`) or `Link` header (`link_header`) with **no check
+  against the plan's declared `hosts`** — reproduced directly: a plan
+  declaring only `api.declared.example` followed a mock `next` value
+  straight to `attacker.invalid`. `packages/interpreter/python/ferrule_interpreter/interpreter.py`
+  (`_next`/`_request`).
+- `artifact diff` does not detect a field going from optional to required,
+  any `enum`/`const`/`pattern`/bounds/`additionalProperties` tightening, or
+  removal of an empty-schema output port — all three reproduced directly;
+  a genuinely incompatible change can classify `breaking: false`.
+  `packages/artifact/{python,go}/*diff*`.
+
+**Medium**
+- `artifact diff`'s plan-change detection ignores step reordering and every
+  plan-level field outside `steps` (including a bare-plan `hosts` change,
+  which is invisible because `diff.py` only checks the full-node-manifest
+  shape's `capabilities.hosts`, not milestone 1a's bare-plan top-level
+  `hosts` — these two document shapes were never reconciled). Duplicate
+  step IDs silently collapse to the last occurrence.
+- Duplicate JSON object keys silently collapse to the last value before
+  hashing/signing (confirmed identical last-wins behavior in Python and
+  Go, so not a cross-language divergence, but a parser-differential risk
+  against any other tool using first-key-wins semantics).
+- Dev-keygen overwrite protection (`exists()`/`Stat()` then write) is
+  TOCTOU-vulnerable to a race or symlink swap between check and write.
+  Impact limited by this being dev-only tooling.
+- The interpreter has no bound on a single response's byte size or decoded
+  JSON size — 100 pages (the pagination cap) of arbitrarily large bodies
+  can exhaust worker memory. Partly a deferred control (`SPEC.md` §4.1
+  assigns `max_output_bytes` enforcement to the Phase 2 proxy), but the
+  interpreter itself has no defense today.
+- Request rendering in the interpreter doesn't sort query parameters or
+  normalize header casing, violating invariant 5 (canonical/deterministic
+  rendering) — two semantically identical plans can render different byte
+  sequences, which is exactly the false-denial risk the Phase 2 proxy
+  comparison is fragile to.
+
+**Low**
+- Python and Go **disagree on acceptance** of an unpaired UTF-16 surrogate
+  escape (e.g. `"\ud83d"` with no matching low surrogate): Python's
+  canonicalizer rejects it with `CanonicalizationError`; Go's
+  `encoding/json` silently substitutes U+FFFD and proceeds. Valid
+  surrogate pairs (real astral characters) match correctly in both.
+- Deeply nested input (500+ levels) raises an uncaught `RecursionError` in
+  the Python canonicalizer, bypassing the CLI's documented
+  `CanonicalizationError`/`TypeError`/`ValueError` error contract.
+- `chmod(0o600)` on the dev private key happens after the write (a brief
+  POSIX race window under the process umask) and is a no-op ACL-wise on
+  Windows regardless.
+- CRLF injected into a rendered header value (via a crafted `input`/
+  `response` field) is blocked by Python's stdlib `http.client` before it
+  reaches the wire — not an actual injection vector — but the interpreter
+  doesn't translate that rejection into a controlled `PlanRejected`; it's
+  an unhandled `ValueError` that happens to get caught by the CLI's broad
+  handler.
+
+**Checked and confirmed fine, no gap:** CEL's namespace restriction under
+macro-local variable shadowing (`map(secret, secret)` compiles but is
+provably harmless — `evaluate()`'s activation never binds a real `secret`
+value regardless of what the compile-time check permits); schema closure
+on `stringMap`/`mapping` values (nested objects/arrays correctly rejected);
+route status-key precedence (exact → Nxx → default); mock server's
+`socket.getaddrinfo` patch restores correctly even when `run()` raises
+partway through.
+
 ### Added — milestone 1c interpreter and mock execution
 
 - Added the Python restricted-plan interpreter with mandatory static checking,

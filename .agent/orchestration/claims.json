@@ -46,5 +46,21 @@
     "startedAt": "2026-09-17T00:10:34.468Z",
     "endedAt": "2026-09-17T00:21:20.289Z",
     "note": "codex exec succeeded"
+  },
+  "phase0-audit": {
+    "milestone": "phase0-audit",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T00:28:00.482Z",
+    "endedAt": "2026-09-17T00:42:53.653Z",
+    "note": "7 findings confirmed, logged in CHANGELOG.md, fixes deferred to next session"
+  },
+  "phase1-audit": {
+    "milestone": "phase1-audit",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T00:36:20.579Z",
+    "endedAt": "2026-09-17T00:42:53.732Z",
+    "note": "4 findings confirmed, logged in CHANGELOG.md, fixes deferred to next session"
   }
 }
