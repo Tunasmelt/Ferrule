@@ -7,6 +7,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Phase 2 milestone 2b — Request comparison and denial paths (2026-09-18)
+
+Built by Codex via `codex-task.mjs` in two bounded dispatches, each
+independently verified: (1) `Authorize()` now compares the independently
+rendered request against the worker's submitted `canonicalized_request`
+byte-for-byte and denies on any divergence, plus a host-declaration check
+proving the plan's own `hosts` list -- not any broader capability-manifest
+field -- is the sole authorization source; both denials emit a typed
+`SecurityEvent`. (2) `services/proxy/forward.go` sends the authorized
+request via a pluggable `Transport`, follows same-host redirects under an
+explicit, precisely-defined budget, denies cross-host redirects without
+ever fetching the target, and enforces a response-size limit and
+content-type allowlist -- all decided from status/headers/length only,
+proven never from response body text via a dedicated injection-probe test.
+
+Codex correctly refused to touch `proxy_test.go` when it was out of scope
+for the first dispatch, even though two of its fixtures predated
+comparison enforcement (a stub submitted request, a manifest with no
+declared hosts) and would now fail. Updated those fixtures directly
+afterward to declare hosts and submit requests that actually match the
+plan step's rendering, rather than weakening the new checks to
+accommodate stale test data.
+
+**Two more issues caught during a full-Go-codebase review pass after both
+dispatches landed** (requested separately, scoped to "check for code
+errors in all the Go architecture," not a fix task) **-- fixed directly,
+not by Codex:**
+- ~~The cross-host redirect check in `forward.go` compared `Hostname()`
+  only~~ -- reproduced directly: an `https://api.example.com/...` to
+  `http://api.example.com/...` redirect (identical hostname, downgraded
+  scheme) was followed without denial. This is a live credential-leak
+  vector the moment milestone 2c injects real secrets into forwarded
+  headers -- an attacker-controlled redirect to the same host over
+  plaintext would carry them along. Fixed by comparing the full origin
+  (scheme + host) instead of hostname alone; added
+  `TestForwardDeniesSchemeDowngradeRedirect`.
+- ~~A JSON-decode failure on the independently-rendered request was
+  mislabeled with `SecurityEvent.Code == "undeclared_host"`~~ -- that
+  failure has nothing to do with hosts; mislabeling it would have caused
+  later drift/alerting tooling to miscount an internal rendering fault as
+  a host-authorization violation. Given its own code,
+  `invalid_rendered_request`. Also removed an unnecessary variable-shadow
+  of `err` in the same function while fixing this.
+
+All fixes re-verified against `go vet`, `gofmt`, `go build` (clean across
+every Go package in the repo), a fresh `gate-2a`, the new `gate-2b`,
+`make check`, and `make conform` -- all green, no regressions.
+
 ### Phase 2 milestone 2a — Artifact access and request re-derivation (2026-09-17)
 
 Built by Codex via `codex-task.mjs`: `services/proxy` (Go) — `ArtifactCache`

@@ -78,12 +78,15 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 	var renderedRequest struct {
 		URL string `json:"url"`
 	}
-	if err := json.Unmarshal(rendered, &renderedRequest); err != nil {
-		return deny(decision, request, "undeclared_host", "rendered request URL is invalid")
+	// A decode failure here means RenderRequest produced malformed JSON, not
+	// that a host is undeclared -- give it its own code so a SecurityEvent
+	// consumer (drift/alerting, later phases) doesn't miscount an internal
+	// rendering fault as a host-authorization violation.
+	if unmarshalErr := json.Unmarshal(rendered, &renderedRequest); unmarshalErr != nil {
+		return deny(decision, request, "invalid_rendered_request", "rendered request is not valid JSON: "+unmarshalErr.Error())
 	}
-	parsedURL, err := url.Parse(renderedRequest.URL)
 	host := ""
-	if err == nil {
+	if parsedURL, parseErr := url.Parse(renderedRequest.URL); parseErr == nil {
 		host = parsedURL.Hostname()
 	}
 	if host == "" || !hostDeclared(manifest, host) {

@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -35,4 +35,10 @@ gate-1c:
 	python -m unittest tests.test_interpreter tests.test_cli -v
 
 gate-2a:
+	go test ./services/proxy/...
+
+# 2b's tests live in the same services/proxy package as 2a's (there is no
+# per-milestone test binary split yet); the gate is named separately per
+# PHASES.md's convention since it is a distinct milestone checkpoint.
+gate-2b:
 	go test ./services/proxy/...

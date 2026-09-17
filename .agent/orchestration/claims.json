@@ -162,9 +162,9 @@
   "2b": {
     "milestone": "2b",
     "owner": "claude-code",
-    "status": "in_progress",
+    "status": "done",
     "startedAt": "2026-09-17T20:40:21.714Z",
-    "endedAt": null,
+    "endedAt": "2026-09-17T21:11:36.886Z",
     "note": ""
   },
   "2b-comparison": {
