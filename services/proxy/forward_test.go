@@ -4,8 +4,50 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+// BoundedRead is the piece of real bounded-reading logic a future net/http
+// transport is expected to call instead of io.ReadAll, so an oversized
+// response is refused while still being read rather than only after it has
+// already been fully buffered. Test it directly against a source that
+// would happily produce far more than the limit if asked.
+func TestBoundedReadRefusesOversizedSource(t *testing.T) {
+	huge := strings.NewReader(strings.Repeat("x", 1_000_000))
+	if _, err := BoundedRead(huge, 10); err == nil {
+		t.Fatal("expected an error for a source exceeding the limit")
+	}
+
+	exact := strings.NewReader(strings.Repeat("y", 10))
+	data, err := BoundedRead(exact, 10)
+	if err != nil || string(data) != strings.Repeat("y", 10) {
+		t.Fatalf("BoundedRead at exactly the limit = (%q, %v), want (%q, nil)", data, err, strings.Repeat("y", 10))
+	}
+
+	under := strings.NewReader("short")
+	data, err = BoundedRead(under, 10)
+	if err != nil || string(data) != "short" {
+		t.Fatalf("BoundedRead under the limit = (%q, %v), want (%q, nil)", data, err, "short")
+	}
+}
+
+// Forward passes policy.MaxResponseBytes to the transport so a real
+// implementation can bound its own read; confirm the value actually
+// reaches the transport rather than being silently dropped.
+func TestForwardPassesResponseByteLimitToTransport(t *testing.T) {
+	var received int
+	transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
+		received = maxResponseBytes
+		return OutboundResponse{Status: 200, Body: []byte("ok")}, nil
+	}
+	if _, _, err := Forward(authorizedDecision("https://api.example.com/start"), ForwardPolicy{MaxResponseBytes: 4096}, transport); err != nil {
+		t.Fatal(err)
+	}
+	if received != 4096 {
+		t.Fatalf("transport received maxResponseBytes = %d, want 4096", received)
+	}
+}
 
 // authorizedDecision fabricates a Decision the way a real one would look
 // after Authorize succeeds, carrying the same identity fields Forward now
@@ -20,7 +62,7 @@ func authorizedDecision(rawURL string) Decision {
 
 func TestForwardFollowsSameHostRedirect(t *testing.T) {
 	var requests []OutboundRequest
-	transport := func(request OutboundRequest) (OutboundResponse, error) {
+	transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 		requests = append(requests, request)
 		if len(requests) == 1 {
 			return OutboundResponse{Status: 302, Headers: map[string]string{"Location": "/next"}}, nil
@@ -44,7 +86,7 @@ func TestForwardFollowsSameHostRedirect(t *testing.T) {
 
 func TestForwardDeniesCrossHostRedirectWithoutFetchingTarget(t *testing.T) {
 	calls := 0
-	transport := func(request OutboundRequest) (OutboundResponse, error) {
+	transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 		calls++
 		return OutboundResponse{Status: 302, Headers: map[string]string{"location": "https://evil.example/admin"}}, nil
 	}
@@ -68,7 +110,7 @@ func TestForwardDeniesCrossHostRedirectWithoutFetchingTarget(t *testing.T) {
 // them over plaintext.
 func TestForwardDeniesSchemeDowngradeRedirect(t *testing.T) {
 	calls := 0
-	transport := func(request OutboundRequest) (OutboundResponse, error) {
+	transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 		calls++
 		return OutboundResponse{Status: 302, Headers: map[string]string{"Location": "http://api.example.com/downgraded"}}, nil
 	}
@@ -85,7 +127,7 @@ func TestForwardDeniesSchemeDowngradeRedirect(t *testing.T) {
 func TestForwardRedirectBudget(t *testing.T) {
 	t.Run("exactly three redirects", func(t *testing.T) {
 		calls := 0
-		transport := func(request OutboundRequest) (OutboundResponse, error) {
+		transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 			calls++
 			if calls <= 3 {
 				return OutboundResponse{Status: 302, Headers: map[string]string{"Location": fmt.Sprintf("/hop/%d", calls)}}, nil
@@ -101,7 +143,7 @@ func TestForwardRedirectBudget(t *testing.T) {
 
 	t.Run("fourth redirect denied", func(t *testing.T) {
 		calls := 0
-		transport := func(request OutboundRequest) (OutboundResponse, error) {
+		transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 			calls++
 			return OutboundResponse{Status: 302, Headers: map[string]string{"Location": fmt.Sprintf("/hop/%d", calls)}}, nil
 		}
@@ -117,7 +159,7 @@ func TestForwardRedirectBudget(t *testing.T) {
 }
 
 func TestForwardDeniesOversizedResponse(t *testing.T) {
-	transport := func(request OutboundRequest) (OutboundResponse, error) {
+	transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 		return OutboundResponse{Status: 200, Body: []byte("12345")}, nil
 	}
 
@@ -137,7 +179,7 @@ func TestForwardContentTypeAllowlist(t *testing.T) {
 		{name: "allowed with parameters", contentType: "Application/JSON; charset=utf-8"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			transport := func(request OutboundRequest) (OutboundResponse, error) {
+			transport := func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 				return OutboundResponse{Status: 200, Headers: map[string]string{"content-type": test.contentType}}, nil
 			}
 
@@ -163,7 +205,7 @@ func TestForwardIgnoresResponseBodyInstructions(t *testing.T) {
 	policy := ForwardPolicy{MaxResponseBytes: len(probe), AllowedContentTypes: []string{"application/json"}}
 
 	run := func(body []byte) (OutboundResponse, *SecurityEvent, error) {
-		return Forward(authorizedDecision("https://api.example.com/start"), policy, func(request OutboundRequest) (OutboundResponse, error) {
+		return Forward(authorizedDecision("https://api.example.com/start"), policy, func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error) {
 			return OutboundResponse{Status: 200, Headers: map[string]string{"Content-Type": "application/json"}, Body: body}, nil
 		})
 	}

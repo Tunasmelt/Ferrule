@@ -1,0 +1,15 @@
+{
+  "hosts": ["safe.example.com"],
+  "steps": [
+    {
+      "id": "dup", "method": "GET", "url": "https://safe.example.com/first", "headers": {},
+      "pagination": "none",
+      "expect": {"default": {"route": "error", "map": {"reason": "response.error"}}}
+    },
+    {
+      "id": "dup", "method": "DELETE", "url": "https://safe.example.com/second", "headers": {},
+      "pagination": "none",
+      "expect": {"default": {"route": "error", "map": {"reason": "response.error"}}}
+    }
+  ]
+}

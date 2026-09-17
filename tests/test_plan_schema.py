@@ -33,6 +33,7 @@ class PlanSchemaTests(unittest.TestCase):
             "unbound-template.json": "UNBOUND_TEMPLATE_VARIABLE",
             "undeclared-host.json": "UNDECLARED_HOST",
             "unbounded-pagination.json": "UNBOUNDED_PAGINATION",
+            "duplicate-step-id.json": "DUPLICATE_STEP_ID",
         }
         for name, code in expected.items():
             with self.subTest(fixture=name):

@@ -102,6 +102,31 @@ def check(plan: object) -> list[Finding]:
     if not isinstance(steps, list):
         return findings
 
+    # The JSON Schema has no uniqueness constraint on step "id" (uniqueItems
+    # would require whole-object equality, not just matching ids), so two
+    # steps sharing an id passes schema validation. The proxy's step lookup
+    # (services/proxy/authorize.go's findStep) resolves an id to the first
+    # matching step, making any later occurrence unreachable/ambiguous by
+    # construction. Reject it here rather than let it silently pass, the
+    # same way 0a rejects duplicate object keys.
+    seen_ids: dict[str, int] = {}
+    for index, step_value in enumerate(steps):
+        step = _mapping(step_value)
+        if step is None:
+            continue
+        step_id = step.get("id")
+        if isinstance(step_id, str):
+            if step_id in seen_ids:
+                findings.append(
+                    Finding(
+                        "DUPLICATE_STEP_ID",
+                        f"step id {step_id!r} also used by steps[{seen_ids[step_id]}]",
+                        f"$.steps[{index}].id",
+                    )
+                )
+            else:
+                seen_ids[step_id] = index
+
     for index, step_value in enumerate(steps):
         step = _mapping(step_value)
         if step is None:

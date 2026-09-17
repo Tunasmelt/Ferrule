@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 )
@@ -22,7 +23,39 @@ type OutboundResponse struct {
 	Body    []byte
 }
 
-type Transport func(OutboundRequest) (OutboundResponse, error)
+// Transport sends one request and returns the response with its body fully
+// read. maxResponseBytes is the caller's configured limit (ForwardPolicy.
+// MaxResponseBytes) -- a real implementation MUST bound its read using it
+// (BoundedRead below does this correctly) rather than reading an unbounded
+// response into memory before Forward gets a chance to check its length.
+// Forward still checks the returned length itself as defense-in-depth
+// against a Transport that ignores this contract, but that check runs
+// after the fact and cannot undo memory or bandwidth already spent -- the
+// mock transports used in this package's own tests fully buffer their
+// (small, fixture-sized) bodies and rely on that defense-in-depth check,
+// which is fine for tests but is not the contract a real transport gets to
+// rely on.
+type Transport func(request OutboundRequest, maxResponseBytes int) (OutboundResponse, error)
+
+// BoundedRead reads at most maxBytes from r into memory, refusing to
+// buffer more than that even if r would produce more. Reads one byte past
+// the limit to distinguish "exactly the limit" from "more than the limit"
+// without needing the source's total length up front, mirroring
+// packages/interpreter/python/ferrule_interpreter/interpreter.py's
+// `raw.read(MAX_RESPONSE_BODY_BYTES + 1)` technique. A real Transport
+// implementation should call this on the live response body instead of
+// io.ReadAll, so an oversized response is refused during acquisition, not
+// only after it has already been fully downloaded.
+func BoundedRead(r io.Reader, maxBytes int) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, int64(maxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("response exceeds %d byte limit", maxBytes)
+	}
+	return data, nil
+}
 
 // ForwardPolicy is supplied by the caller until full node manifests produce
 // SPEC.md section 5's runtime_limits block. This is a deliberate temporary
@@ -58,7 +91,7 @@ func Forward(decision Decision, policy ForwardPolicy, transport Transport) (Outb
 
 	redirects := 0
 	for {
-		response, err := transport(outbound)
+		response, err := transport(outbound, policy.MaxResponseBytes)
 		if err != nil {
 			return OutboundResponse{}, nil, err
 		}

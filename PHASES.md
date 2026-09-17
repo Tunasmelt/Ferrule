@@ -190,6 +190,13 @@ Test criteria
 - [x] Static checker rejects: unbound template variable, undeclared host,
       unbounded pagination, missing default route (4 cases minimum, one per
       failure kind) — 4/4 present, one fixture each, verified independently.
+      **Added 2026-09-18** (5th case, beyond the original minimum): duplicate
+      step `id` — the schema has no uniqueness constraint on it, so a
+      schema-valid plan could have two steps sharing an id, which the proxy's
+      `findStep` (milestone 2b) resolves ambiguously (first match always
+      wins). Found during 2b's dedicated audit as a milestone 1a gap, not a
+      2b one, and fixed here rather than in the proxy: `check()` now emits
+      `DUPLICATE_STEP_ID`, fixture `duplicate-step-id.json` added.
 
 Security criteria
 - [x] Static checker runs before any plan reaches the interpreter — there is
@@ -546,27 +553,40 @@ two real issues.
   `TestFindStepAcceptsBarePlanDocumentShape` with a comment pointing to
   `TestAuthorizeAcceptsMatchingRequest`, which already covers full
   acceptance of this same shape.
-- **Tracked, not fixed here (Medium correctness / Low current security
-  impact):** `packages/plan-schema`'s JSON Schema has no uniqueness
-  constraint on step `id`, and the Python checker doesn't add one either
-  — a schema-valid plan can have two steps sharing an `id`. `findStep`
-  returns the first match, so the second occurrence can never be
-  authorized (fails the byte comparison against the wrong step's
-  rendering) — this fails closed, not open, so it is not an authorization
-  bypass today. This is a milestone 1a gap, not a 2b one; fixing it means
-  adding a duplicate-`id` check to `packages/plan-schema`'s checker
-  (the same shape as 0a's existing duplicate-object-key rejection), which
-  was left for a separate, explicitly scoped follow-up rather than
-  reopening a closed phase inside this audit.
-- **Tracked, not fixed here (Medium for whichever milestone adds a real
-  transport; no current exploit):** `Forward`'s response-size check
-  compares `len(response.Body)` only after `Transport` has already
+- **Follow-up fixed 2026-09-18 (was: Medium correctness / Low current
+  security impact):** `packages/plan-schema`'s JSON Schema had no
+  uniqueness constraint on step `id`, and the Python checker didn't add
+  one either — a schema-valid plan could have two steps sharing an `id`.
+  `findStep` returns the first match, so the second occurrence could never
+  be authorized (fails the byte comparison against the wrong step's
+  rendering) — this failed closed, not open, so it was never an
+  authorization bypass, but it was a milestone 1a gap. Fixed in 1a's own
+  package rather than in the proxy: `check()` now emits
+  `DUPLICATE_STEP_ID` (see milestone 1a's test-criteria note above for
+  detail); re-verified full `python -m unittest discover` clean, no
+  regression on 0a–1c.
+- **Follow-up fixed 2026-09-18 (was: Medium for whichever milestone adds a
+  real transport; no current exploit):** `Forward`'s response-size check
+  compared `len(response.Body)` only after `Transport` had already
   returned a fully-buffered body — correct against the mock transports
-  used today, but a real `net/http`-backed transport would need to enforce
-  the limit *while reading*, not after, or an oversized response becomes
-  a memory/bandwidth exhaustion vector before the denial ever fires. Note
-  left here for whichever milestone builds the real transport (2c or
-  later) rather than invented against a transport that doesn't exist yet.
+  used in tests, but a real transport would need to enforce the limit
+  *while reading*, not after, or an oversized response becomes a
+  memory/bandwidth exhaustion vector before the denial ever fires. Fixed
+  by changing `Transport`'s signature to
+  `func(OutboundRequest, maxResponseBytes int) (OutboundResponse, error)`
+  — `Forward` now passes `policy.MaxResponseBytes` to the transport on
+  every call, so any real implementation has the bound available to
+  enforce during acquisition — plus a new `BoundedRead(io.Reader, int)
+  ([]byte, error)` helper any real transport should call instead of
+  `io.ReadAll`, using the same "read one byte past the limit" technique
+  as `packages/interpreter/python/ferrule_interpreter/interpreter.py`'s
+  `_http()`. `Forward`'s own post-hoc length check remains as
+  defense-in-depth against a transport that ignores the contract.
+  `TestBoundedReadRefusesOversizedSource` and
+  `TestForwardPassesResponseByteLimitToTransport` added as permanent
+  tests. This still doesn't build a real `net/http` transport — that
+  remains for whichever milestone actually needs one — but the contract
+  it must honor, and a tested helper for honoring it, now exist.
 
 Exit when: comparison/host/redirect/budget/size/content-type denial tests
 pass and the injection probe holds. — met.

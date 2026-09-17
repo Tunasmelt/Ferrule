@@ -7,6 +7,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 2b audit follow-ups (2026-09-18) — both tracked items fixed
+
+The two items left tracked-but-not-fixed in the 2b dedicated audit
+(below) were both fixed the same day at the user's request.
+
+- ~~`packages/plan-schema` had no duplicate-step-`id` constraint~~ — fixed
+  in `checker.py`: `check()` now walks `steps` once up front and emits
+  `DUPLICATE_STEP_ID` (path `$.steps[N].id`) the first time an `id`
+  repeats, the same shape as 0a's existing duplicate-object-key
+  rejection. New fixture `tests/fixtures/plans/invalid/duplicate-step-id.json`
+  and a case in `test_invalid_fixtures_have_expected_finding`. Full
+  `python -m unittest discover` (56 tests) still green, no regression on
+  0a–1c.
+- ~~`Forward`'s response-size check only compared length after the
+  transport had already buffered the full body~~ — fixed by changing
+  `Transport`'s signature to accept `maxResponseBytes int` (`Forward`
+  passes `policy.MaxResponseBytes` on every call), plus a new
+  `BoundedRead(io.Reader, int) ([]byte, error)` helper any real transport
+  should call instead of `io.ReadAll` -- reads one byte past the limit to
+  detect an oversized source without needing its total length up front,
+  the same technique `packages/interpreter/python/ferrule_interpreter/
+  interpreter.py`'s `_http()` already uses. `Forward`'s own post-hoc
+  length check stays as defense-in-depth for a transport that ignores the
+  contract. This doesn't build a real `net/http` transport (still a later
+  milestone's job) but gives it a tested, correct contract and helper to
+  use. `TestBoundedReadRefusesOversizedSource`,
+  `TestForwardPassesResponseByteLimitToTransport` added; updated every
+  mock `Transport` in `forward_test.go` to the new signature.
+
+`gate-2b`, `gate-2a`, `make check`, `make conform` all re-run green.
+
 ### Milestone 2b dedicated audit (2026-09-18) — 2 fixed, 2 tracked
 
 Claude Code independent read pass, then a second independent read-only
