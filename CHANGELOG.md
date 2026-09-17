@@ -7,6 +7,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Phase 2 milestone 2a — Artifact access and request re-derivation (2026-09-17)
+
+Built by Codex via `codex-task.mjs`: `services/proxy` (Go) — `ArtifactCache`
+(signature-verified, immutable, push-only from Go callers, no network
+surface), `RunJournal` (in-memory stand-in for phase 5's Postgres-backed
+journal), `RenderRequest` (independent Go re-implementation of the Python
+interpreter's canonical rendering rules — marker substitution, secret
+markers preserved unresolved, sorted query/headers, compact sort-keys JSON
+body matching Python's `ensure_ascii=True` escaping), and `Authorize`
+(protocol steps 1–4 of `SPEC.md` §4.1: fetch+verify artifact, locate step,
+verify journaled digest, independently re-render — steps 5–9 are milestones
+2b/2c's).
+
+**Caught during independent review**: Codex's `findStep` only matched a
+`manifest["plan"]["steps"]` shape — `SPEC.md` §5's *future full node
+manifest* shape, which no code in this repo actually produces yet — and its
+own test fixtures used that same fabricated shape, so its tests stayed
+green while the function silently failed against the plan documents this
+codebase actually has today (milestone 1a's schema-validated, 1c's
+interpreter-executed bare `{hosts, steps}` document, no `plan` wrapper).
+This is the identical defect class caught in milestone 0c's plan-diff fix
+two days ago: a fix and its own test agreeing with each other on an
+invented shape neither the schema nor the interpreter produces. Reproduced
+directly — pushed a real bare-plan-document artifact through `Authorize`
+and confirmed a present step was reported "not found." Fixed in
+`authorize.go` by falling back to the manifest itself as the plan when no
+`plan` key exists. Added `TestAuthorizeAcceptsBarePlanDocumentShape` using
+the real shape as a permanent regression test. Re-verified `gate-2a`,
+`make check`, `make conform` all green after the fix, no regression on
+phases 0–1.
+
 ### Audit findings — Phase 0 + Phase 1 (2026-09-17) — ALL 11 FIXED
 
 Two independent audit passes (Codex fresh-context + Claude Code, each

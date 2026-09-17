@@ -110,5 +110,13 @@
     "startedAt": "2026-09-17T15:54:09.837Z",
     "endedAt": "2026-09-17T16:00:39.530Z",
     "note": "codex exec succeeded"
+  },
+  "2a": {
+    "milestone": "2a",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T17:14:39.306Z",
+    "endedAt": "2026-09-17T17:23:33.491Z",
+    "note": "codex exec succeeded"
   }
 }

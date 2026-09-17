@@ -40,7 +40,7 @@ in the same commit that closes the gate; don't let it drift from
 |---|---|---|
 | 0 — Artifact format | 0a ✅ / 0b ✅ / 0c ✅ | **closed** |
 | 1 — Plan language | 1a ✅ / 1b ✅ / 1c ✅ | **closed** |
-| 2 — Proxy & broker | 2a–2d ⬜ | not started |
+| 2 — Proxy & broker | 2a ✅ / 2b–2d ⬜ | in progress |
 | 3 — Compiler (OpenAPI) | 3a–3c ⬜ | not started |
 | 4 — Verification & evidence | 4a–4c ⬜ | not started |
 | 5 — Durable execution | 5a–5c ⬜ | not started |
@@ -337,40 +337,76 @@ first real data on the number from `SPEC.md` §3.4.
 **Goal:** the core security claim holds under adversarial test. **This phase,
 and milestone 2b in particular, is the most important gate in the project.**
 
-### Milestone 2a — Artifact access and request re-derivation
+### Milestone 2a — Artifact access and request re-derivation — ✅ CLOSED 2026-09-17
 
 Deliverables
-- `services/proxy` (Go) skeleton: receives
-  `{ node_version_hash, run_id, step_seq, step_id, step_input_digest,
-  canonicalized_request }`
-- Artifact push-at-dispatch: orchestrator pushes the signed artifact to the
-  proxy's local cache when a run starts
-- Run journal write of `step_input_digest` **before** dispatch (this must
-  land before 2a's request-comparison code is written, since comparison
-  depends on it)
-- Independent re-rendering of the step's URL/headers/query/body from the
-  journaled input (the proxy does not trust the worker's rendering)
+- [x] `services/proxy` (Go) skeleton: `Authorize(cache, journal, request)`
+      taking a struct matching
+      `{ node_version_hash, run_id, step_seq, step_id, step_input_digest,
+      canonicalized_request }` — a plain Go function API, not a network
+      listener; wiring behind `net/http` is left to the milestone that
+      actually has something on the other end of the wire
+- [x] `ArtifactCache`: `Push` (verifies signature via
+      `packages/artifact/go` before caching, immutable once cached — no
+      update path) and `Get`; `Push` is not reachable from any
+      network-facing surface (there isn't one in this milestone)
+- [x] `RunJournal` interface + in-memory implementation: records a step's
+      input and its `sha256(canonical(input))` digest before authorization
+      can reference it, stands in for the real Postgres-backed journal
+      phase 5 will build behind the same interface
+- [x] Independent Go re-rendering of a step's URL/headers/query/body
+      (`RenderRequest`), reproducing
+      `packages/interpreter/python/ferrule_interpreter/render.py` and
+      `interpreter.py`'s `_request` canonicalization rules byte-for-byte:
+      marker substitution, secret markers preserved verbatim (never
+      resolved — no secret resolution exists anywhere in this milestone),
+      sorted merged query params, title-cased sorted headers, compact
+      sort-keys JSON body with Python's `ensure_ascii=True` escaping
+      (verified against unicode/astral-character fixtures, not assumed from
+      Go's `encoding/json` defaults)
 
 Test criteria
-- [ ] Proxy fetches and verifies a pushed artifact's signature before using it
-      (reuses `packages/artifact` verify from phase 0 — no reimplementation)
-- [ ] Proxy denies (does not process) a request whose `step_id` is absent
+- [x] Proxy fetches and verifies a pushed artifact's signature before using
+      it — a tampered artifact is rejected by `Push` and never retrievable
+- [x] Proxy denies (does not process) a request whose `step_id` is absent
       from the plan
-- [ ] Proxy denies a request whose `step_input_digest` does not match the
+- [x] Proxy denies a request whose `step_input_digest` does not match the
       journal row for `(run_id, step_seq)`
-- [ ] Canonicalization determinism: 1,000 renders of the same step input
-      produce byte-identical requests (this is the earliest point this can be
-      tested and the highest-value regression check in the whole project —
-      run it in CI on every proxy change, not just once)
+- [x] Canonicalization determinism: 1,000 renders of the same step input
+      produce byte-identical requests (a real 1,000-iteration loop, not a
+      token gesture)
 
 Security criteria
-- [ ] Proxy has no "trusted" or "bypass" code path reachable by any request
-      shape, header, or flag (grep-based CI check for banned identifiers like
-      `skip_verify`, `trusted`, `bypass`)
-- [ ] Proxy artifact cache is read-only from the proxy's own perspective — no
-      endpoint on the proxy can write or mutate a cached artifact
+- [x] Proxy has no "trusted" or "bypass" code path reachable by any request
+      shape, header, or flag — enforced by a real Go test that scans every
+      non-test `.go` file under `services/proxy` for `skip_verify`,
+      `bypass`, `trusted`, `danger_full_access` as identifiers, not just a
+      manual review
+- [x] Proxy artifact cache is read-only from the proxy's own perspective —
+      confirmed by reading `cache.go` directly: `Push` is Go-API-only, no
+      HTTP/RPC surface exists in this package at all yet
 
-Gate `make gate-2a`
+Gate `make gate-2a` — **passing** (verified 2026-09-17, independently
+re-run: `go test ./services/proxy/... -v` and `go test ./...` both green;
+`make check`/`make conform` re-run clean, no regression on phases 0–1).
+Built by Codex via `codex-task.mjs`.
+
+**Caught during independent review** (same defect class as milestone 0c's
+plan-diff gap): Codex's `findStep` only looked for steps nested under a
+`manifest["plan"]["steps"]` key — the shape `SPEC.md` section 5 shows for a
+*full future node manifest* — and its own test fixtures used exactly that
+shape, so its tests passed while never exercising the plan document this
+codebase actually produces today. Every plan document that milestone 1a's
+schema validates and milestone 1c's interpreter executes has `steps` at the
+*top level*, with no `plan` wrapper at all. Reproduced directly: pushed a
+real bare-plan-document artifact (`{"hosts": [...], "steps": [...]}`) through
+`Authorize` and confirmed `findStep` reported "step not found" for a step
+that was actually present. Fixed directly in `authorize.go` by falling back
+to treating the manifest itself as the plan when no `plan` key exists —
+same fix shape as the earlier `diff.go`/`diff.py` correction. Added
+`TestAuthorizeAcceptsBarePlanDocumentShape` as a permanent regression test
+using the real shape. Re-verified `gate-2a` green after the fix.
+Exit when: fixture proxy tests pass and determinism/denial cases hold. — met.
 
 ### Milestone 2b — Request comparison and denial paths
 
