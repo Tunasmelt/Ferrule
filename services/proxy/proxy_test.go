@@ -107,7 +107,12 @@ func TestRenderRequestDeterministic1000Times(t *testing.T) {
 
 func setupAuthorization(t *testing.T) (*ArtifactCache, *MemoryRunJournal, AuthorizationRequest) {
 	t.Helper()
-	manifest := `{"plan":{"steps":[{"id":"fetch","method":"GET","url":"https://x.test/{{ input.id }}","headers":{}}]}}`
+	// "hosts" must be declared and CanonicalizedRequest must actually match
+	// what the plan step renders to, now that Authorize enforces both the
+	// host-declaration check and the byte-for-byte comparison (milestone
+	// 2b) -- a stub submitted request or an undeclared host would be denied
+	// before reaching the digest/step assertions these tests exist to check.
+	manifest := `{"plan":{"hosts":["x.test"],"steps":[{"id":"fetch","method":"GET","url":"https://x.test/{{ input.id }}","headers":{}}]}}`
 	hash, signed, publicKey := signedManifest(t, manifest)
 	cache := NewArtifactCache()
 	if err := cache.Push(hash, signed, publicKey); err != nil {
@@ -118,7 +123,8 @@ func setupAuthorization(t *testing.T) (*ArtifactCache, *MemoryRunJournal, Author
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cache, journal, AuthorizationRequest{NodeVersionHash: hash, RunID: "run-1", StepSeq: 1, StepID: "fetch", StepInputDigest: row.Digest, CanonicalizedRequest: json.RawMessage(`{"worker":true}`)}
+	submitted := json.RawMessage(`{"method":"GET","url":"https://x.test/42","headers":{},"body":null}`)
+	return cache, journal, AuthorizationRequest{NodeVersionHash: hash, RunID: "run-1", StepSeq: 1, StepID: "fetch", StepInputDigest: row.Digest, CanonicalizedRequest: submitted}
 }
 
 func TestAuthorizeDeniesAbsentStep(t *testing.T) {
@@ -171,15 +177,15 @@ func TestAuthorizeUsesJournaledPreviousContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := `{"method":"GET","url":"https://api.example.com/items?account=acct-1&cursor=page-2-cursor-abc","headers":{},"body":null}`
 	request := AuthorizationRequest{
 		NodeVersionHash: hash, RunID: "run-1", StepSeq: 2, StepID: "list",
-		StepInputDigest: row.Digest, CanonicalizedRequest: json.RawMessage(`{"worker":true}`),
+		StepInputDigest: row.Digest, CanonicalizedRequest: json.RawMessage(want),
 	}
 	decision := Authorize(cache, journal, request)
 	if !decision.ChecksPassed {
 		t.Fatalf("expected checks to pass: %+v", decision)
 	}
-	want := `{"method":"GET","url":"https://api.example.com/items?account=acct-1&cursor=page-2-cursor-abc","headers":{},"body":null}`
 	if string(decision.RenderedRequest) != want {
 		t.Fatalf("got  %s\nwant %s", decision.RenderedRequest, want)
 	}

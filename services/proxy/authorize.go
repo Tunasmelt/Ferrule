@@ -1,6 +1,12 @@
 package proxy
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 // AuthorizationRequest carries the worker's already-canonical JSON request.
 // Milestone 2b will compare it with Decision.RenderedRequest.
@@ -22,6 +28,7 @@ type Decision struct {
 	RenderedRequest  json.RawMessage
 	SubmittedRequest json.RawMessage
 	Reason           string
+	SecurityEvent    *SecurityEvent
 }
 
 func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRequest) Decision {
@@ -68,8 +75,64 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 		return decision
 	}
 	decision.RenderedRequest = rendered
+	var renderedRequest struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rendered, &renderedRequest); err != nil {
+		return deny(decision, request, "undeclared_host", "rendered request URL is invalid")
+	}
+	parsedURL, err := url.Parse(renderedRequest.URL)
+	host := ""
+	if err == nil {
+		host = parsedURL.Hostname()
+	}
+	if host == "" || !hostDeclared(manifest, host) {
+		return deny(decision, request, "undeclared_host", fmt.Sprintf("rendered request host %q is not declared in plan hosts", host))
+	}
+	if !bytes.Equal(decision.RenderedRequest, decision.SubmittedRequest) {
+		return deny(decision, request, "request_mismatch", requestMismatchReason(rendered, decision.SubmittedRequest))
+	}
 	decision.ChecksPassed = true
 	return decision
+}
+
+func deny(decision Decision, request AuthorizationRequest, code, reason string) Decision {
+	decision.Reason = reason
+	decision.SecurityEvent = &SecurityEvent{
+		Code: code, Reason: reason,
+		NodeVersionHash: request.NodeVersionHash, RunID: request.RunID,
+		StepSeq: request.StepSeq, StepID: request.StepID,
+	}
+	return decision
+}
+
+func hostDeclared(manifest map[string]any, host string) bool {
+	// Hosts belong to the same effective plan document as steps. In a full
+	// manifest this intentionally ignores capabilities.hosts, which cannot
+	// widen the plan's authority.
+	plan := planDocument(manifest)
+	hosts, _ := plan["hosts"].([]any)
+	for _, declared := range hosts {
+		if value, ok := declared.(string); ok && strings.ToLower(value) == strings.ToLower(host) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestMismatchReason(rendered, submitted []byte) string {
+	var expected, actual map[string]json.RawMessage
+	if err := json.Unmarshal(submitted, &actual); err != nil {
+		return "submitted request is not valid JSON"
+	}
+	if err := json.Unmarshal(rendered, &expected); err == nil {
+		for _, field := range []string{"method", "url", "headers", "body"} {
+			if !bytes.Equal(expected[field], actual[field]) {
+				return fmt.Sprintf("submitted request %s differs from independently rendered request", field)
+			}
+		}
+	}
+	return "submitted canonical request bytes differ from independently rendered request"
 }
 
 func findStep(manifest map[string]any, stepID string) (map[string]any, bool) {
@@ -80,10 +143,7 @@ func findStep(manifest map[string]any, stepID string) (map[string]any, bool) {
 	// all. Treat the manifest itself as the plan when no "plan" key exists,
 	// so authorization works against the plan documents this project
 	// actually has right now, not only the future full-manifest shape.
-	plan, ok := manifest["plan"].(map[string]any)
-	if !ok {
-		plan = manifest
-	}
+	plan := planDocument(manifest)
 	steps, ok := plan["steps"].([]any)
 	if !ok {
 		return nil, false
@@ -95,4 +155,11 @@ func findStep(manifest map[string]any, stepID string) (map[string]any, bool) {
 		}
 	}
 	return nil, false
+}
+
+func planDocument(manifest map[string]any) map[string]any {
+	if plan, ok := manifest["plan"].(map[string]any); ok {
+		return plan
+	}
+	return manifest
 }

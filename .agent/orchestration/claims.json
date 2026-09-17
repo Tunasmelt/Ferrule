@@ -158,5 +158,21 @@
     "startedAt": "2026-09-17T19:43:44.899Z",
     "endedAt": "2026-09-17T19:44:56.045Z",
     "note": "done"
+  },
+  "2b": {
+    "milestone": "2b",
+    "owner": "claude-code",
+    "status": "in_progress",
+    "startedAt": "2026-09-17T20:40:21.714Z",
+    "endedAt": null,
+    "note": ""
+  },
+  "2b-comparison": {
+    "milestone": "2b-comparison",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-17T20:40:52.049Z",
+    "endedAt": "2026-09-17T20:45:33.255Z",
+    "note": "codex exec succeeded"
   }
 }
