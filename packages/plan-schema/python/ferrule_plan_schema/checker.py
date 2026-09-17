@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
+from .cel import CELCompileError, compile_expression
+
 _TEMPLATE = re.compile(r"{{\s*([^{}]*?)\s*}}")
 _REFERENCE = re.compile(
     r"(?:input|secret|response)\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
@@ -131,6 +133,10 @@ def check(plan: object) -> list[Finding]:
                 )
             )
 
+        condition = step.get("condition")
+        if isinstance(condition, str):
+            findings.extend(_cel_findings(condition, f"{base}.condition"))
+
         expect = _mapping(step.get("expect"))
         if expect is not None and "default" not in expect:
             findings.append(
@@ -140,4 +146,30 @@ def check(plan: object) -> list[Finding]:
                     f"{base}.expect",
                 )
             )
+        if expect is not None:
+            for status, route_value in expect.items():
+                route = _mapping(route_value)
+                if route is None:
+                    continue
+                when = route.get("when")
+                if isinstance(when, str):
+                    findings.extend(_cel_findings(when, f"{base}.expect.{status}.when"))
+                mapping = _mapping(route.get("map"))
+                if mapping is not None:
+                    for name, expression in mapping.items():
+                        if isinstance(expression, str):
+                            findings.extend(
+                                _cel_findings(
+                                    expression,
+                                    f"{base}.expect.{status}.map.{name}",
+                                )
+                            )
     return findings
+
+
+def _cel_findings(source: str, path: str) -> list[Finding]:
+    try:
+        compile_expression(source)
+    except CELCompileError as error:
+        return [Finding("CEL_COMPILE_ERROR", str(error), path)]
+    return []

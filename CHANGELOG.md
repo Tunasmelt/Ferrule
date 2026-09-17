@@ -7,6 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Added — milestone 1b CEL integration and cost limits
+
+- Wired `cel-python` (`celpy`) into the plan-schema checker: `map`,
+  `when`/`condition`, and route-mapping CEL expressions are now
+  compile-checked, not just validated as non-empty strings.
+- Added a namespace-restriction static check (AST walk over celpy's parse
+  tree) limiting expressions to `input`/`response` only — `secret` is
+  structurally unreachable from CEL, per invariant 1. Comprehension locals
+  (`filter`/`map`/`all`/`exists`/`exists_one`) are scoped correctly.
+- Added a cost limit as a killable subprocess wall-clock timeout (1s
+  evaluation budget, 10s startup budget): `cel-python` 0.5.0 has no native
+  evaluation-step/cost accounting, so this substitutes for it. Documented as
+  a v1 judgement call, not a claim that celpy has real cost budgeting.
+- Added a standard-library function allowlist test — nothing beyond CEL's
+  built-in functions is registered.
+- `mypy --strict` and `ruff` clean; no regression on milestones 0a–1a
+  (independently re-verified, not just re-stated from the build report).
+
 ### Added — milestone 1a static plan checker
 
 - Added the draft 2020-12 restricted-plan schema, CEL context declarations,

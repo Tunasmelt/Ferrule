@@ -55,6 +55,31 @@ class PlanSchemaTests(unittest.TestCase):
         self.assertTrue(validate_schema(plan))
         self.assertIn("SCHEMA_INVALID", {finding.code for finding in check(plan)})
 
+    def test_checker_compile_checks_cel_expressions(self) -> None:
+        plan = self.load(self.fixtures / "valid" / "none.json")
+        assert isinstance(plan, dict)
+        steps = plan["steps"]
+        assert isinstance(steps, list)
+        step = steps[0]
+        assert isinstance(step, dict)
+        step["condition"] = "secret.token != ''"
+        expect = step["expect"]
+        assert isinstance(expect, dict)
+        route = expect["200"]
+        assert isinstance(route, dict)
+        route["when"] = "unknown.flag"
+        route["map"] = {"value": "secret.token"}
+        findings = check(plan)
+        self.assertIn("CEL_COMPILE_ERROR", {finding.code for finding in findings})
+        self.assertEqual(
+            {
+                "$.steps[0].condition",
+                "$.steps[0].expect.200.map.value",
+                "$.steps[0].expect.200.when",
+            },
+            {finding.path for finding in findings if finding.code == "CEL_COMPILE_ERROR"},
+        )
+
     def test_package_contains_no_execution_capability(self) -> None:
         forbidden = (
             "import requests",
