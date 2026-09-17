@@ -56,7 +56,7 @@ func authorizedDecision(rawURL string) Decision {
 	return Decision{
 		NodeVersionHash: "sha256:node", RunID: "run-1", StepSeq: 2, StepID: "send",
 		ChecksPassed:    true,
-		RenderedRequest: []byte(fmt.Sprintf(`{"method":"POST","url":%q,"headers":{"X-Test":"yes"},"body":{"value":"ordinary"}}`, rawURL)),
+		RenderedRequest: fmt.Appendf(nil, `{"method":"POST","url":%q,"headers":{"X-Test":"yes"},"body":{"value":"ordinary"}}`, rawURL),
 	}
 }
 
