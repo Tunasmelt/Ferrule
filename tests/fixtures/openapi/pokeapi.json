@@ -27,6 +27,30 @@
         ],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/ability/{id}": {
+      "get": {
+        "operationId": "getAbilityById",
+        "summary": "Get an ability",
+        "description": "Abilities provide passive effects for Pokemon in battle or in the overworld. Fetch by name or numeric id.",
+        "tags": ["ability"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/type/{id}": {
+      "get": {
+        "operationId": "getTypeById",
+        "summary": "Get a type",
+        "description": "Types are properties for Pokemon and their moves. Fetch by name or numeric id.",
+        "tags": ["type"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

@@ -40,6 +40,13 @@ class ExtractJobResponse(StrictModel):
     result: ExtractResult
 
 
+class ParameterResponse(StrictModel):
+    name: str
+    location: str
+    required: bool
+    schema_type: str
+
+
 class OperationResponse(StrictModel):
     operation_id: str
     method: str
@@ -47,6 +54,7 @@ class OperationResponse(StrictModel):
     summary: str
     description: str
     tags: list[str]
+    parameters: list[ParameterResponse]
 
 
 class OperationsResponse(StrictModel):

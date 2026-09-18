@@ -27,6 +27,19 @@
         ],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/v1/elevation": {
+      "get": {
+        "operationId": "getElevation",
+        "summary": "Get elevation",
+        "description": "Elevation in meters for a given latitude and longitude from a digital elevation model.",
+        "tags": ["elevation"],
+        "parameters": [
+          { "name": "latitude", "in": "query", "required": true, "schema": { "type": "number" } },
+          { "name": "longitude", "in": "query", "required": true, "schema": { "type": "number" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

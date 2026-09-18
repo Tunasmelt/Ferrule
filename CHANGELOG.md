@@ -7,6 +7,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 3b closed: deterministic schema and plan generation (2026-09-19)
+
+Scope decision made with the user before writing code: plan generation is
+deterministic template mapping (path/query/header parameters -> plan
+templates), not an LLM-backed "Builder model" as SPEC.md §8 eventually
+intends -- 3b's actual test criteria (20+ real GET operations, no bodies)
+don't need one, and a real LLM integration is a provider/cost decision to
+raise separately when a later milestone actually requires it.
+
+New `services/compiler/python/ferrule_compiler/generate.py`: maps a GET
+`Operation` (extended in 3a's `openapi.py` with a new `Parameter` field)
+onto a phase-1 plan, input_schema, and output_schema, reusing 1c's
+`ferrule_interpreter.coverage.classify_plan` for the `plan_coverage`
+verdict. Fixtures extended from 13 to 23 real GET operations across the
+same 8 specs, plus one new synthetic fixture to honestly exercise the
+`not_representable` path (a cookie-location parameter). All 5 first-party
+Python packages are now genuinely `pip install -e .`-editable-installed
+(with `py.typed` markers) rather than resolved only via test-file
+`sys.path` hacks, since generation is the first application code needing a
+real cross-package import. See `PHASES.md` milestone 3b for full detail,
+including the manual-inspection record its test criteria require.
+
 ### Milestone 3a audit: 3 findings fixed (2026-09-19)
 
 Whole-milestone audit of 3a (cross-file/integration issues a narrow

@@ -19,4 +19,8 @@ packages = ["ferrule_artifact", "ferrule_cli", "ferrule_interpreter", "ferrule_p
 package-dir = {ferrule_artifact = "packages/artifact/python/ferrule_artifact", ferrule_cli = "cli/ferrule_cli", ferrule_interpreter = "packages/interpreter/python/ferrule_interpreter", ferrule_plan_schema = "packages/plan-schema/python/ferrule_plan_schema", ferrule_compiler = "services/compiler/python/ferrule_compiler"}
 
 [tool.setuptools.package-data]
-ferrule_plan_schema = ["plan.schema.json", "cel-types.json"]
+ferrule_plan_schema = ["plan.schema.json", "cel-types.json", "py.typed"]
+ferrule_artifact = ["py.typed"]
+ferrule_cli = ["py.typed"]
+ferrule_interpreter = ["py.typed"]
+ferrule_compiler = ["py.typed"]

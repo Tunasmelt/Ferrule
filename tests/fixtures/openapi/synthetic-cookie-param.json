@@ -1,0 +1,19 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Synthetic fixture (not a real API)", "version": "1.0" },
+  "servers": [{ "url": "https://example.invalid" }],
+  "paths": {
+    "/session-report": {
+      "get": {
+        "operationId": "getSessionReport",
+        "summary": "Get a session report (cookie-authenticated, synthetic)",
+        "description": "Deliberately hand-built to require a cookie-location parameter, which the phase-1 plan language has no first-class support for -- used to exercise milestone 3b's not_representable path honestly, without forcing a fake requirement onto one of the real API fixtures.",
+        "tags": ["synthetic"],
+        "parameters": [
+          { "name": "session_id", "in": "cookie", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

@@ -25,6 +25,14 @@ class InvalidOpenAPIError(OpenAPIIngestError):
 
 
 @dataclass(frozen=True, slots=True)
+class Parameter:
+    name: str
+    location: str  # OpenAPI "in": path | query | header | cookie
+    required: bool
+    schema_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class Operation:
     operation_id: str
     method: str
@@ -32,6 +40,7 @@ class Operation:
     summary: str
     description: str
     tags: tuple[str, ...]
+    parameters: tuple[Parameter, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +73,31 @@ def _fallback_id(method: str, path: str) -> str:
 
 def _text(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _parameters(path_item: dict[object, object], operation: dict[object, object]) -> tuple[Parameter, ...]:
+    """Merge Path Item Object and Operation Object parameter lists per OpenAPI 3.x semantics.
+
+    Operation-level entries override a path-level entry with the same
+    (name, in); iteration order (path-level first, then operation-level)
+    is preserved via dict insertion order for deterministic output.
+    """
+    merged: dict[tuple[str, str], Parameter] = {}
+    for raw_list in (path_item.get("parameters"), operation.get("parameters")):
+        if not isinstance(raw_list, list):
+            continue
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            name = _text(item.get("name"))
+            location = _text(item.get("in"))
+            if not name or not location:
+                continue
+            schema = item.get("schema")
+            schema_type = _text(schema.get("type")) if isinstance(schema, dict) else ""
+            required = bool(item.get("required")) or location == "path"
+            merged[(name, location)] = Parameter(name, location, required, schema_type or "string")
+    return tuple(merged.values())
 
 
 def ingest(raw: bytes) -> IngestedSpec:
@@ -111,6 +145,7 @@ def ingest(raw: bytes) -> IngestedSpec:
                     summary=_text(operation.get("summary")),
                     description=_text(operation.get("description")),
                     tags=tags,
+                    parameters=_parameters(path_item, operation),
                 )
             )
     return IngestedSpec(

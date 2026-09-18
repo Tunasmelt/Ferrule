@@ -32,6 +32,30 @@
         "tags": ["charges"],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/v1/charges/{charge}": {
+      "get": {
+        "operationId": "GetChargesCharge",
+        "summary": "Retrieve a charge",
+        "description": "Retrieves the details of a charge that has previously been created.",
+        "tags": ["charges"],
+        "parameters": [
+          { "name": "charge", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/invoices/{invoice}": {
+      "get": {
+        "operationId": "GetInvoicesInvoice",
+        "summary": "Retrieve an invoice",
+        "description": "Retrieves the invoice with the given ID.",
+        "tags": ["invoices"],
+        "parameters": [
+          { "name": "invoice", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

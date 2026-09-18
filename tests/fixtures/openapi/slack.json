@@ -20,6 +20,15 @@
         "tags": ["chat"],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/users.list": {
+      "get": {
+        "operationId": "users.list",
+        "summary": "List users",
+        "description": "Lists all users in a Slack team.",
+        "tags": ["users"],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

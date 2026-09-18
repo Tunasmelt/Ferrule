@@ -24,6 +24,18 @@
         ],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/2010-04-01/Accounts/{AccountSid}/Calls.json": {
+      "get": {
+        "operationId": "ListCall",
+        "summary": "List calls",
+        "description": "Retrieve a list of calls made to and from an account.",
+        "tags": ["calls"],
+        "parameters": [
+          { "name": "AccountSid", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

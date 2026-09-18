@@ -10,3 +10,11 @@ each API's real, current public documentation as of this writing.
 Used by services/compiler/python/ferrule_compiler's ingest tests to prove
 against real-shaped operations, not synthetic ones invented to fit the
 parser.
+
+`synthetic-cookie-param.json` is the one exception: it is not one of the 8
+real specs above and is not counted in "8 specs" or "20 GET operations"
+test criteria. It is a small, explicitly hand-built, clearly-labeled
+fixture used only by milestone 3b's plan-generation tests to exercise the
+`not_representable` verdict honestly (a cookie-location parameter, which
+the phase-1 plan language has no first-class support for) without forcing
+a fake requirement onto one of the real API fixtures above.

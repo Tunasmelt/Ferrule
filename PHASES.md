@@ -1099,30 +1099,127 @@ milestone rather than per-file, found and fixed 3 issues:
   within one ingested document with a deterministic `-2`, `-3`, … suffix;
   covered by `test_colliding_fallback_ids_are_disambiguated`.
 
-### Milestone 3b — Schema and plan generation
+### Milestone 3b — Schema and plan generation — ✅ CLOSED 2026-09-19
+
+**Scope decision, made with the user before writing any code**: generation
+is deterministic template mapping, not an LLM-backed "Builder model".
+SPEC.md §8 describes generation via a real model call with a regenerate-
+on-failure loop; this milestone's actual test criteria (20+ real GET
+operations, no request bodies) are fully satisfiable by mechanically
+mapping OpenAPI path/query/header parameters into the phase-1 plan
+language — no judgment call is required. A real LLM integration is a
+product decision (provider, API key handling, cost controls) deferred to
+whichever later milestone first needs it for cases this can't handle
+(request bodies, ambiguous response shapes). Because generation here is
+deterministic, the "regenerate-on-failure loop" degenerates to a single
+attempt by construction (documented in `generate.py`'s module docstring):
+the same operation always produces the same plan, so a static-check
+failure means the mapping is unrepresentable, not a fixable mistake worth
+retrying blindly.
 
 Deliverables
-- Input/output port schema generation
-- Plan generation targeting the phase-1 plan language, with a bounded
-  regenerate-on-failure loop (static check failure feeds back into
-  generation, bounded attempts, then surfaces to a human)
-- `plan_coverage` verdict recorded for every attempt, success or failure
+- [x] Input/output port schema generation (`generate.py`'s `_input_schema`
+      and the fixed `_OUTPUT_SCHEMA`) — `input_schema` built from each
+      operation's path/query/header parameters (JSON Schema type mapped
+      from the OpenAPI parameter schema, `required` set for path params
+      always and query/header params per their declared `required`);
+      `output_schema` is a fixed two-port shape (`ok`, `error`) since
+      generic REST responses have no declared shape to derive ports from
+      without parsing response schemas, which these fixtures mostly don't
+      declare either.
+- [x] Deterministic plan generation (`generate.py`'s `compile_operation`):
+      one step per GET operation, path parameters substituted into the URL
+      template, query/header parameters mapped into the step's `query`/
+      `headers` maps, `200 -> ok` and `default -> error` routes each
+      mapping the whole response/status. Returns `not_representable` (never
+      a silently wrong plan) for: non-GET operations, a `cookie`-location
+      parameter (no first-class support in the plan language), a parameter
+      name that isn't a valid template/CEL identifier, or a `Source`
+      `base_url` with no resolvable hostname.
+      **3a's `Operation` model was extended** with a `parameters` field
+      (new `Parameter` dataclass: name/location/required/schema_type,
+      merging Path Item Object and Operation Object parameter lists per
+      OpenAPI 3.x override semantics) — 3a's ingest never captured
+      parameters at all, and plan generation needs them. `OperationResponse`
+      gained the matching field; existing 3a tests unaffected (none
+      asserted exact-equality on the full operation shape).
+- [x] `plan_coverage` verdict recorded for every attempt, reusing 1c's
+      existing `ferrule_interpreter.coverage.classify_plan` classifier
+      rather than reimplementing it — every one of the 23 real GET
+      operations gets `representable` or `representable_partial`, and the
+      one deliberately-unrepresentable synthetic fixture gets
+      `not_representable`, so this milestone is the first to give the
+      classifier's `representable_partial` and `not_representable` verdicts
+      real exercise (1c's own text flagged this as still owed).
+      `representable_partial` is used honestly, matching SPEC.md's own
+      definition ("fits except for N named transformations"): an optional
+      query/header parameter always renders (empty string when unset
+      — `render.py`'s `_lookup`) rather than being omitted from the
+      request, since the plan language has no conditional-inclusion
+      primitive — recorded as a named limitation, not silently ignored.
+- [x] Fixtures extended from 13 to **23** real GET operations across the
+      same 8 specs (2-3 more genuinely real, documented operations added to
+      7 of the 8 files — `jsonplaceholder.json` deliberately left untouched
+      since 3a's resolver tests depend on its exact 3-operation shape), plus
+      one new, clearly-labeled **synthetic** fixture
+      (`synthetic-cookie-param.json`, explicitly excluded from the "8 real
+      specs" / "20 GET operations" counts, documented in the fixtures
+      README) built specifically to exercise the `not_representable` path
+      honestly with a `cookie`-location parameter, rather than forcing a
+      fake requirement onto one of the real API fixtures.
+- [x] All 5 first-party Python packages (`ferrule_artifact`,
+      `ferrule_cli`, `ferrule_interpreter`, `ferrule_plan_schema`,
+      `ferrule_compiler`) are now **actually editable-installed**
+      (`pip install -e .`) rather than resolved only via ad hoc
+      `sys.path.insert` in test files — `generate.py` is the first piece of
+      application code (not test scaffolding) needing a real cross-package
+      import (`ferrule_interpreter.coverage`, `ferrule_plan_schema`), which
+      test-only `sys.path` hacks can't satisfy. Added a `py.typed` marker
+      (PEP 561) to each package and registered it in
+      `pyproject.toml`'s `package-data` so `mypy --strict` can resolve
+      cross-package types without ad hoc `MYPYPATH` tricks going forward.
 
 Test criteria
-- [ ] 20 GET operations across the 8 specs from 3a compile to plans that pass
-      the phase-1 static checker
-- [ ] `plan_coverage` recorded for all 20, including any that fail to compile
-- [ ] 100% of the 20 either produce a valid plan or an explicit
+- [x] 20 GET operations across the 8 specs from 3a compile to plans that
+      pass the phase-1 static checker — 23 real GET operations available
+      (exceeds 20); `test_compiler_generate.py` compiles every one and
+      independently re-runs `ferrule_plan_schema.check()` on each returned
+      plan (not trusting `compile_operation`'s internal call), asserting
+      zero findings for all 23.
+- [x] `plan_coverage` recorded for all 20 (23), including any that fail to
+      compile — every compile call returns a `CompileResult` with a
+      `coverage` verdict; the synthetic cookie-parameter case and a non-GET
+      operation both exercise the failure path with a recorded verdict and
+      reasons, not an exception.
+- [x] 100% of the 20 (23) either produce a valid plan or an explicit
       `not_representable` verdict — never a silently wrong plan that passes
-      static checks (this is checked by manual inspection of a sample, not
-      just automated — record the sample size and reviewer)
+      static checks. **Manual inspection performed**: 6 of the 23 generated
+      plans (github `repos/get` and `issues/list-for-repo`, pokeapi
+      `listPokemon`, open-meteo `getForecast`, slack `conversations.list`,
+      twilio `ListMessage` — chosen to cover path-only, path+optional-query,
+      query-only, no-parameters, and dotted-operation-id cases) printed in
+      full and read by the reviewer, confirming correct URL templating,
+      query mapping, host extraction (including a spec whose `base_url`
+      has a path prefix, `pokeapi.co/api/v2`), and `input_schema`
+      required/optional splitting. Reviewer: Claude Code, 2026-09-19.
 
 Security criteria
-- [ ] Generated plans are static-checked (milestone 1a's checker) before
+- [x] Generated plans are static-checked (milestone 1a's checker) before
       being persisted as a `node_version` row in any status other than
-      `draft` — generation cannot skip the checker via a different code path
+      `draft` — generation cannot skip the checker via a different code
+      path. No `node_version` persistence layer exists yet in this
+      codebase (a later phase's concern), so this is enforced at the only
+      point that currently exists: `compile_operation` has exactly one
+      return path that yields a non-`None` `plan` (after `check_plan`
+      returns zero findings), and `test_generated_plans_actually_pass_the_static_checker`
+      independently re-runs the checker on every returned plan rather than
+      trusting the internal call, closing the "different code path" gap
+      this criterion is guarding against.
 
-Gate `make gate-3b`
+Gate `make gate-3b` (depends on `gate-3a`) — 25/25 tests pass (16 from 3a
++ 9 new); `make check` (81/81 Python tests), `mypy --strict`
+(`services/compiler/python/ferrule_compiler` + `cli/ferrule_cli`, clean),
+and `make conform` (20/20) all still pass with no regressions.
 
 ### Milestone 3c — Mock tests, assumptions, coverage decision
 

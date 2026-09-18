@@ -40,6 +40,32 @@
         ],
         "responses": { "201": { "description": "Created" } }
       }
+    },
+    "/repos/{owner}/{repo}/pulls": {
+      "get": {
+        "operationId": "pulls/list",
+        "summary": "List pull requests",
+        "description": "Lists pull requests in a specified repository.",
+        "tags": ["pulls"],
+        "parameters": [
+          { "name": "owner", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "repo", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "state", "in": "query", "required": false, "schema": { "type": "string", "enum": ["open", "closed", "all"] } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/users/{username}": {
+      "get": {
+        "operationId": "users/get-by-username",
+        "summary": "Get a user",
+        "description": "Provides publicly available information about someone with a GitHub account.",
+        "tags": ["users"],
+        "parameters": [
+          { "name": "username", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }

@@ -20,6 +20,15 @@
         "tags": ["suppressions"],
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/v3/templates": {
+      "get": {
+        "operationId": "get-templates",
+        "summary": "Retrieve all transactional templates",
+        "description": "This endpoint allows you to retrieve all transactional templates.",
+        "tags": ["templates"],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }
