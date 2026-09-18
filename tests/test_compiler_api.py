@@ -89,6 +89,34 @@ class CompilerAPITests(unittest.TestCase):
         self.assertEqual(400, response.status_code)
         self.assertEqual("malformed_request", response.json()["error"]["code"])
 
+    def test_oversized_document_upload_is_rejected(self) -> None:
+        response = self.client.post(
+            "/sources",
+            json={"name": "Oversized", "base_url": "https://example.com", "auth_kind": "bearer"},
+        )
+        source_id = response.json()["id"]
+        oversized = b"0" * (10 * 1024 * 1024 + 1)
+        uploaded = self.client.post(
+            f"/sources/{source_id}/documents",
+            data={"kind": "openapi"},
+            files={"file": ("huge.json", oversized, "application/json")},
+        )
+        self.assertEqual(413, uploaded.status_code)
+        self.assertEqual("document_too_large", uploaded.json()["error"]["code"])
+
+    def test_resuming_a_job_twice_is_rejected(self) -> None:
+        source_id = self.register_and_extract()
+        ambiguous = self.client.post(
+            f"/sources/{source_id}/resolve",
+            json={"task": "Fetch a single resource by its numeric id"},
+        )
+        resume_url = ambiguous.json()["resume_url"]
+        first = self.client.post(resume_url, json={"choice": "getUser"})
+        self.assertEqual(200, first.status_code)
+        second = self.client.post(resume_url, json={"choice": "getPost"})
+        self.assertEqual(409, second.status_code)
+        self.assertEqual("job_not_resumable", second.json()["error"]["code"])
+
 
 if __name__ == "__main__":
     unittest.main()

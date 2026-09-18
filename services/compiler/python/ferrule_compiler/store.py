@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from threading import RLock
+from typing import Literal
 from uuid import uuid4
 
 from .openapi import Operation
@@ -12,6 +13,14 @@ from .openapi import Operation
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+class JobResumeError(Exception):
+    """Raised by Store.resume_needs_input; reason maps 1:1 to an HTTP status in api.py."""
+
+    def __init__(self, reason: Literal["not_found", "not_resumable", "invalid_choice"]) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,3 +100,26 @@ class Store:
     def get_job(self, job_id: str) -> Job | None:
         with self._lock:
             return deepcopy(self._jobs.get(job_id))
+
+    def resume_needs_input(self, job_id: str, choice: str) -> Job:
+        """Atomically validate-and-consume a needs_input job in one lock acquisition.
+
+        A separate get-then-put (the original shape) lets two concurrent
+        resumes of the same job both pass the status check before either
+        writes, so the second silently clobbers the first's result. Holding
+        the lock across the whole check-select-write sequence makes a job
+        resumable exactly once, the same single-use guarantee the proxy's
+        journal gives replay protection.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise JobResumeError("not_found")
+            if job.status != "needs_input":
+                raise JobResumeError("not_resumable")
+            selected = next((item for item in job.options if item.operation_id == choice), None)
+            if selected is None:
+                raise JobResumeError("invalid_choice")
+            resolved = Job(job.id, "resolve", "succeeded", {"operation": asdict(selected)})
+            self._jobs[job.id] = deepcopy(resolved)
+            return deepcopy(resolved)

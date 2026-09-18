@@ -27,7 +27,13 @@ from .models import (
 )
 from .openapi import OpenAPIIngestError, Operation, ingest
 from .resolve import ResolutionStatus, resolve_operation
-from .store import Document, ExtractedSpec, Job, Source, Store, new_id
+from .store import Document, ExtractedSpec, Job, JobResumeError, Source, Store, new_id
+
+# Generous for hand-written OpenAPI docs, but bounds ingest cost against a
+# hostile upload (unbounded read + yaml.safe_load are otherwise a resource-
+# exhaustion vector: safe_load blocks code execution, not memory/CPU blowup
+# from adversarial anchor/alias expansion).
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 
 class APIError(Exception):
@@ -89,7 +95,9 @@ def create_app() -> FastAPI:
         file: UploadFile = File(...),
     ) -> DocumentResponse:
         require_source(source_id)
-        raw = await file.read()
+        raw = await file.read(MAX_DOCUMENT_BYTES + 1)
+        if len(raw) > MAX_DOCUMENT_BYTES:
+            raise APIError(413, "document_too_large", f"document exceeds the {MAX_DOCUMENT_BYTES}-byte limit")
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         document = Document(new_id("doc"), source_id, kind, raw, digest)
         store.put_document(document)
@@ -182,20 +190,20 @@ def create_app() -> FastAPI:
 
     @app.post("/jobs/{job_id}/resume")
     def resume_job(job_id: str, body: ResumeRequest) -> ResolvedResponse:
-        job = store.get_job(job_id)
-        if job is None:
-            raise APIError(404, "job_not_found", f"job {job_id} was not found")
-        if job.status != "needs_input":
-            raise APIError(409, "job_not_resumable", "job does not need input")
-        selected = next((item for item in job.options if item.operation_id == body.choice), None)
-        if selected is None:
-            raise APIError(422, "invalid_operation_choice", "choice is not one of the job options")
-        store.put_job(Job(job.id, "resolve", "succeeded", {"operation": asdict(selected)}))
+        try:
+            job = store.resume_needs_input(job_id, body.choice)
+        except JobResumeError as error:
+            if error.reason == "not_found":
+                raise APIError(404, "job_not_found", f"job {job_id} was not found") from error
+            if error.reason == "not_resumable":
+                raise APIError(409, "job_not_resumable", "job does not need input") from error
+            raise APIError(422, "invalid_operation_choice", "choice is not one of the job options") from error
+        assert job.result is not None
         return ResolvedResponse(
             job_id=job.id,
             status="succeeded",
             poll_url=f"/jobs/{job.id}",
-            operation=_operation_model(selected),
+            operation=OperationResponse.model_validate(job.result["operation"]),
         )
 
     return app

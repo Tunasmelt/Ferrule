@@ -7,6 +7,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 3a audit: 3 findings fixed (2026-09-19)
+
+Whole-milestone audit of 3a (cross-file/integration issues a narrow
+per-file review wouldn't catch), all 3 findings fixed immediately:
+- Unbounded document upload combined with `yaml.safe_load`'s exposure to
+  anchor/alias resource-exhaustion (same class as Phase 2's already-fixed
+  unbounded-request-body finding) — fixed with a 10 MiB upload cap.
+- Check-then-act race in job resume: two concurrent resumes of the same
+  `needs_input` job could both pass validation before either wrote,
+  silently double-resuming (same class as Phase 2's SecretBindings race) —
+  fixed with `Store.resume_needs_input` holding one lock across the whole
+  check-select-write sequence; verified with a threaded regression test.
+- Fallback `operation_id` collisions for structurally different paths that
+  tokenize identically (e.g. `/foo/bar` vs `/foo-bar`) could make a resume
+  silently resolve to the wrong operation — fixed with deterministic
+  collision disambiguation. See `PHASES.md` milestone 3a for full detail.
+
 ### Milestone 3a closed: compiler ingest and operation resolution (2026-09-19)
 
 Phase 3 (the compiler) begins. New `services/compiler/python/ferrule_compiler`

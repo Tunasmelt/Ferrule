@@ -55,4 +55,4 @@ gate-2d:
 gate-2: gate-2a gate-2b gate-2c gate-2d
 
 gate-3a:
-	python -m unittest tests.test_compiler_ingest tests.test_compiler_resolve tests.test_compiler_api -v
+	python -m unittest tests.test_compiler_ingest tests.test_compiler_resolve tests.test_compiler_api tests.test_compiler_store -v

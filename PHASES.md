@@ -1060,7 +1060,7 @@ Test criteria
       resolved. Malformed-body and unknown-source-id error paths verified
       against API.md's documented error envelope shape.
 
-Gate `make gate-3a` — 12/12 tests pass; `make check` (68/68 Python tests,
+Gate `make gate-3a` — 16/16 tests pass; `make check` (72/72 Python tests,
 `mypy --strict` clean on the new package, Go tests unaffected) and
 `make conform` (20/20 fixtures) both still pass with no regressions.
 
@@ -1070,6 +1070,34 @@ target, pyproject.toml registration — before failing); independently
 re-verified by Claude Code: read every new source file, ran `gate-3a`,
 `make check`, `make conform`, and `mypy --strict` directly rather than
 trusting the dispatch's self-report.
+
+**Milestone 3a audit (2026-09-19)**, run by Claude Code across the whole
+milestone rather than per-file, found and fixed 3 issues:
+- **Medium — FIXED**: `upload_document` read an uploaded document with no
+  size cap, and `openapi._load` falls back to `yaml.safe_load` on anything
+  that isn't valid JSON — `safe_load` blocks code execution but not
+  resource exhaustion from adversarial anchor/alias expansion on a small
+  malicious upload. Same issue class as the unbounded-request-body finding
+  already fixed for the proxy in the Phase 2 whole-phase audit, not carried
+  over here. Fixed with a 10 MiB cap enforced via a bounded `file.read(...)`
+  in `api.py`, returning `413 document_too_large`.
+- **Medium — FIXED**: `resume_job` read a job then wrote it back as two
+  separate `Store` lock acquisitions, so two concurrent resumes of the same
+  `needs_input` job with different choices could both pass the status check
+  before either wrote — the second write silently clobbered the first with
+  no error, resuming a job twice. Same race class as Phase 2's SecretBindings
+  finding. Fixed by adding `Store.resume_needs_input`, which holds one lock
+  across the whole check-select-write sequence, making resume single-use by
+  construction; verified with a threaded test
+  (`tests/test_compiler_store.py`) asserting exactly one of two concurrent
+  resumes succeeds.
+- **Low — FIXED**: `_fallback_id`'s word-based tokenization drops path
+  structure, so e.g. `/foo/bar` and `/foo-bar` (same method, no declared
+  `operationId`) synthesize the identical fallback id — an undetected
+  collision would let `resume_job`'s exact-id lookup silently resolve to
+  the wrong operation. Fixed by disambiguating any duplicate operation id
+  within one ingested document with a deterministic `-2`, `-3`, … suffix;
+  covered by `test_colliding_fallback_ids_are_disambiguated`.
 
 ### Milestone 3b — Schema and plan generation
 

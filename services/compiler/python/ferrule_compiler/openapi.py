@@ -83,6 +83,7 @@ def ingest(raw: bytes) -> IngestedSpec:
         raise InvalidOpenAPIError("paths must be an object")
 
     operations: list[Operation] = []
+    seen_ids: dict[str, int] = {}
     for path, path_item in paths.items():
         if not isinstance(path, str) or not isinstance(path_item, dict):
             continue
@@ -91,6 +92,15 @@ def ingest(raw: bytes) -> IngestedSpec:
             if not isinstance(operation, dict):
                 continue
             operation_id = _text(operation.get("operationId")) or _fallback_id(method, path)
+            # Word-based fallback ids can collide across structurally different
+            # paths (e.g. "/foo/bar" and "/foo-bar" both tokenize to "foo bar").
+            # An undetected collision would let a resume's exact-id lookup
+            # silently pick the wrong operation, so disambiguate deterministically.
+            if operation_id in seen_ids:
+                seen_ids[operation_id] += 1
+                operation_id = f"{operation_id}-{seen_ids[operation_id]}"
+            else:
+                seen_ids[operation_id] = 1
             raw_tags = operation.get("tags", [])
             tags = tuple(tag for tag in raw_tags if isinstance(tag, str)) if isinstance(raw_tags, list) else ()
             operations.append(

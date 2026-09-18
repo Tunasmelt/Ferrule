@@ -76,6 +76,23 @@ paths:
         self.assertEqual("get-widgets-by-id", first.operation_id)
         self.assertEqual(first.operation_id, second.operation_id)
 
+    def test_colliding_fallback_ids_are_disambiguated(self) -> None:
+        # "/foo/bar" and "/foo-bar" both tokenize to the same words, so their
+        # synthesized fallback ids would collide without disambiguation --
+        # an undetected collision lets a resume's exact-id lookup silently
+        # resolve to the wrong operation.
+        raw = (
+            b'{"openapi":"3.0.0","info":{},"paths":{'
+            b'"/foo/bar":{"get":{"responses":{}}},'
+            b'"/foo-bar":{"get":{"responses":{}}}'
+            b"}}"
+        )
+        operations = ingest(raw).operations
+        ids = [item.operation_id for item in operations]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertIn("get-foo-bar", ids)
+        self.assertIn("get-foo-bar-2", ids)
+
 
 if __name__ == "__main__":
     unittest.main()
