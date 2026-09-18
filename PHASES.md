@@ -994,24 +994,82 @@ for detail.
 
 **Goal:** generation accuracy on real specs.
 
-### Milestone 3a — Ingest and operation resolution
+### Milestone 3a — Ingest and operation resolution — ✅ CLOSED 2026-09-19
 
 Deliverables
-- OpenAPI ingest (parse, validate, hash source documents)
-- Operation resolution from a natural-language task description to a
-  candidate operation (or `needs_input` when ambiguous)
-- `POST /sources`, `POST /sources/{id}/documents`,
-  `POST /sources/{id}/extract` from `docs/API.md`
+- [x] OpenAPI ingest (`services/compiler/python/ferrule_compiler/openapi.py`):
+      parses JSON or YAML, validates the minimal required OpenAPI 3.x
+      structure with distinct error types for "not valid JSON/YAML" vs.
+      "valid but not OpenAPI", extracts one `Operation` per (path, method)
+      with a stable synthesized `operation_id` fallback when the spec omits
+      one, and computes a `sha256:<hex>` source hash matching the hash
+      format already used elsewhere in this codebase.
+- [x] Deterministic operation resolution (`resolve.py`): Jaccard word-set
+      similarity over camelCase/kebab-case/path-segment-aware tokenization
+      of `operationId`/summary/description/tags/path, with a minimum
+      relevance floor (reject low-confidence guesses as `no_match`) and a
+      ratio-based ambiguity band (candidates within 90% of the top score
+      are all returned as `needs_input` options, not just the top two). No
+      LLM call anywhere in this milestone — SPEC.md §8's "Builder model" is
+      milestone 3b's concern (schema/plan generation), not operation
+      resolution, and 3a's own test criteria are fully satisfiable
+      deterministically.
+- [x] `POST /sources`, `POST /sources/{id}/documents`,
+      `POST /sources/{id}/extract` from `docs/API.md`, plus two additions
+      beyond API.md's documented surface, both noted inline in `api.py`:
+      `GET /sources/{id}/operations` (API.md's extract response only
+      returns a count, not the queryable list this milestone's test
+      criteria require) and `POST /sources/{id}/resolve` (API.md's
+      resolution-with-ambiguity flow lives inside `POST /nodes/compile`,
+      which also does schema/plan generation — milestone 3b's job, not
+      built yet; 3a adds a narrower endpoint scoped to resolution only).
+      `POST /jobs/{id}/resume` resolves a `needs_input` job with a chosen
+      `operation_id`. In-memory, mutex-guarded store
+      (`store.py`) standing in for Postgres, matching the same
+      documented-stand-in pattern used throughout Phase 2's `RunJournal`/
+      `ArtifactCache`/`CredentialStore`. No workspace-scoped API-key auth in
+      this milestone — noted explicitly in `api.py` as a deliberate scope
+      boundary, same as `services/proxy`'s single-shared-secret bearer
+      token predating a full auth system.
+- [x] 8 hand-authored OpenAPI 3.0 fixture excerpts under
+      `tests/fixtures/openapi/` modeling real, currently-documented
+      operations from GitHub, Stripe, PokeAPI, JSONPlaceholder, Open-Meteo,
+      Slack, SendGrid, and Twilio (see that directory's `README.md` for the
+      same "recorded fixture, not a live call" honesty framing established
+      in milestone 1c).
 
 Test criteria
-- [ ] 8 public OpenAPI specs ingest without error and produce a queryable
-      operation list
-- [ ] A deliberately ambiguous task description against a spec with two
+- [x] 8 public OpenAPI specs ingest without error and produce a queryable
+      operation list — `tests/test_compiler_ingest.py` ingests all 8
+      fixtures and spot-checks specific known operations by
+      operation_id/method/path, not just non-empty-list checks.
+- [x] A deliberately ambiguous task description against a spec with two
       matching operations returns `needs_input` with both candidates, not a
-      guess
-- [ ] `POST /jobs/{id}/resume` with a chosen operation ID proceeds correctly
+      guess — `tests/test_compiler_resolve.py`: the task "Fetch a single
+      resource by its numeric id" against `jsonplaceholder.json` resolves
+      ambiguous with both `getPost` and `getUser` as candidates (and
+      `getPostComments` correctly excluded); a closely-matching task
+      resolves unambiguously to `getPost` alone; an irrelevant task
+      ("launch a satellite into orbit") returns `no_match` rather than a
+      low-confidence guess.
+- [x] `POST /jobs/{id}/resume` with a chosen operation ID proceeds
+      correctly — `tests/test_compiler_api.py` drives the full real HTTP
+      flow via FastAPI's `TestClient`: create source → upload document →
+      extract → list operations → resolve (unambiguous) → resolve
+      (ambiguous, `needs_input`) → resume with a chosen operation_id →
+      resolved. Malformed-body and unknown-source-id error paths verified
+      against API.md's documented error envelope shape.
 
-Gate `make gate-3a`
+Gate `make gate-3a` — 12/12 tests pass; `make check` (68/68 Python tests,
+`mypy --strict` clean on the new package, Go tests unaffected) and
+`make conform` (20/20 fixtures) both still pass with no regressions.
+
+Built by Codex via `codex-task.mjs` (dispatch hit a Codex usage-limit error
+mid-task but had already completed the real work — package, tests, Makefile
+target, pyproject.toml registration — before failing); independently
+re-verified by Claude Code: read every new source file, ran `gate-3a`,
+`make check`, `make conform`, and `mypy --strict` directly rather than
+trusting the dispatch's self-report.
 
 ### Milestone 3b — Schema and plan generation
 

@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -53,3 +53,6 @@ gate-2d:
 # plus make security (also required, but tracked as its own invocation per
 # CLAUDE.md/AGENTS.md, not folded silently into this target).
 gate-2: gate-2a gate-2b gate-2c gate-2d
+
+gate-3a:
+	python -m unittest tests.test_compiler_ingest tests.test_compiler_resolve tests.test_compiler_api -v

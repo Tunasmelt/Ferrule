@@ -1,0 +1,32 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "PokeAPI (excerpt)", "version": "2.0" },
+  "servers": [{ "url": "https://pokeapi.co/api/v2" }],
+  "paths": {
+    "/pokemon/{id}": {
+      "get": {
+        "operationId": "getPokemonById",
+        "summary": "Get a Pokemon",
+        "description": "Pokemon are the creatures that inhabit the world of the Pokemon games. Fetch by name or numeric id.",
+        "tags": ["pokemon"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/pokemon": {
+      "get": {
+        "operationId": "listPokemon",
+        "summary": "List Pokemon",
+        "description": "A paginated list of all Pokemon resources.",
+        "tags": ["pokemon"],
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

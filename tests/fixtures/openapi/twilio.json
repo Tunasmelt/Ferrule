@@ -1,0 +1,29 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Twilio API (excerpt)", "version": "2010-04-01" },
+  "servers": [{ "url": "https://api.twilio.com" }],
+  "paths": {
+    "/2010-04-01/Accounts/{AccountSid}/Messages.json": {
+      "post": {
+        "operationId": "CreateMessage",
+        "summary": "Send a message",
+        "description": "Send a new outgoing message via SMS, MMS, or WhatsApp.",
+        "tags": ["messages"],
+        "parameters": [
+          { "name": "AccountSid", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "operationId": "ListMessage",
+        "summary": "List messages",
+        "description": "Retrieve a list of messages sent from or received by an account.",
+        "tags": ["messages"],
+        "parameters": [
+          { "name": "AccountSid", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

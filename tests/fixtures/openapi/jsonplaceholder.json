@@ -1,0 +1,43 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "JSONPlaceholder (excerpt, with an intentionally ambiguous pair)", "version": "1.0" },
+  "servers": [{ "url": "https://jsonplaceholder.typicode.com" }],
+  "paths": {
+    "/posts/{id}": {
+      "get": {
+        "operationId": "getPost",
+        "summary": "Get a post",
+        "description": "Fetch a single post resource by its numeric id.",
+        "tags": ["posts"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/posts/{id}/comments": {
+      "get": {
+        "operationId": "getPostComments",
+        "summary": "Get comments for a post",
+        "description": "Fetch the list of comments attached to a single post resource by its numeric id.",
+        "tags": ["posts", "comments"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "operationId": "getUser",
+        "summary": "Get a user",
+        "description": "Fetch a single user resource by its numeric id.",
+        "tags": ["users"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

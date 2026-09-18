@@ -7,6 +7,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 3a closed: compiler ingest and operation resolution (2026-09-19)
+
+Phase 3 (the compiler) begins. New `services/compiler/python/ferrule_compiler`
+package: dependency-light OpenAPI 3.x ingest with sha256 source hashing,
+a deterministic Jaccard-similarity operation resolver (no LLM call — that's
+milestone 3b's concern), an in-memory mutex-guarded store, and a FastAPI
+surface implementing `POST /sources`, `POST /sources/{id}/documents`,
+`POST /sources/{id}/extract` from `docs/API.md`, plus two documented
+additions beyond API.md's surface (`GET /sources/{id}/operations`,
+`POST /sources/{id}/resolve`) and `POST /jobs/{id}/resume`. 8 new hand-authored
+OpenAPI fixtures under `tests/fixtures/openapi/` (GitHub, Stripe, PokeAPI,
+JSONPlaceholder, Open-Meteo, Slack, SendGrid, Twilio). See `PHASES.md`
+milestone 3a for full detail and verification notes.
+
 ### All 5 tracked whole-phase audit findings fixed (2026-09-19)
 
 The whole-phase audit below left 5 findings tracked but unfixed. All 5

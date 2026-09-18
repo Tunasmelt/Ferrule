@@ -1,0 +1,32 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Open-Meteo (excerpt)", "version": "1.0" },
+  "servers": [{ "url": "https://api.open-meteo.com" }],
+  "paths": {
+    "/v1/forecast": {
+      "get": {
+        "operationId": "getForecast",
+        "summary": "Get a weather forecast",
+        "description": "7 day weather forecast for a given latitude and longitude, with hourly and daily variables.",
+        "tags": ["weather"],
+        "parameters": [
+          { "name": "latitude", "in": "query", "required": true, "schema": { "type": "number" } },
+          { "name": "longitude", "in": "query", "required": true, "schema": { "type": "number" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/geocoding": {
+      "get": {
+        "operationId": "searchGeocoding",
+        "summary": "Search for a location by name",
+        "description": "Geocoding API to convert a place name into geographic coordinates.",
+        "tags": ["geocoding"],
+        "parameters": [
+          { "name": "name", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

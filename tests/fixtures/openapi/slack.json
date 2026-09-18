@@ -1,0 +1,25 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Slack Web API (excerpt)", "version": "1.0" },
+  "servers": [{ "url": "https://slack.com/api" }],
+  "paths": {
+    "/conversations.list": {
+      "get": {
+        "operationId": "conversations.list",
+        "summary": "List conversations",
+        "description": "Lists all channels in a Slack team.",
+        "tags": ["conversations"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/chat.postMessage": {
+      "post": {
+        "operationId": "chat.postMessage",
+        "summary": "Send a message",
+        "description": "Sends a message to a channel.",
+        "tags": ["chat"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

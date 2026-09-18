@@ -262,5 +262,13 @@
     "startedAt": "2026-09-18T21:14:29.288Z",
     "endedAt": "2026-09-18T21:33:28.974Z",
     "note": ""
+  },
+  "3a": {
+    "milestone": "3a",
+    "owner": "claude-code",
+    "status": "failed",
+    "startedAt": "2026-09-18T21:51:25.441Z",
+    "endedAt": "2026-09-18T21:56:49.235Z",
+    "note": "exit 1"
   }
 }

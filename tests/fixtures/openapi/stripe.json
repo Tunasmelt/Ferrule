@@ -1,0 +1,37 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Stripe API (excerpt)", "version": "2024-06-20" },
+  "servers": [{ "url": "https://api.stripe.com" }],
+  "paths": {
+    "/v1/customers/{customer}": {
+      "get": {
+        "operationId": "GetCustomersCustomer",
+        "summary": "Retrieve a customer",
+        "description": "Retrieves a Customer object.",
+        "tags": ["customers"],
+        "parameters": [
+          { "name": "customer", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/customers": {
+      "post": {
+        "operationId": "PostCustomers",
+        "summary": "Create a customer",
+        "description": "Creates a new customer object.",
+        "tags": ["customers"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/charges": {
+      "post": {
+        "operationId": "PostCharges",
+        "summary": "Create a charge",
+        "description": "To charge a credit card or other payment source, you create a Charge object.",
+        "tags": ["charges"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

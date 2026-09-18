@@ -1,0 +1,25 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "SendGrid API (excerpt)", "version": "3.0" },
+  "servers": [{ "url": "https://api.sendgrid.com" }],
+  "paths": {
+    "/v3/mail/send": {
+      "post": {
+        "operationId": "mail-send",
+        "summary": "Send mail",
+        "description": "This endpoint allows you to send email over SendGrid's v3 Web API.",
+        "tags": ["mail"],
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v3/suppression/bounces": {
+      "get": {
+        "operationId": "get-bounces",
+        "summary": "Retrieve all bounces",
+        "description": "This endpoint allows you to retrieve all of your bounces.",
+        "tags": ["suppressions"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}
