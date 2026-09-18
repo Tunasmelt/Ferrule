@@ -6,9 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strings"
 )
+
+// TransportError wraps a Transport failure with a SPEC.md section 7
+// failure class ("timeout" for a network timeout, "transient" otherwise --
+// a connection reset, DNS failure, or similar is generally worth retrying
+// with backoff). Found missing during a whole-phase audit: most failure
+// paths in this package had no SPEC-defined class at all, only this
+// package's own SecurityEvent.Code strings, which cover authorization
+// denials but not upstream connectivity failures. Err's text is already
+// redacted (see the call site) before it reaches this type.
+type TransportError struct {
+	Class string
+	Err   error
+}
+
+func (e *TransportError) Error() string { return e.Err.Error() }
+func (e *TransportError) Unwrap() error { return e.Err }
 
 type OutboundRequest struct {
 	Method  string
@@ -87,6 +104,50 @@ type ForwardPolicy struct {
 	AllowedContentTypes []string
 }
 
+// MergeForwardPolicy combines the caller's configured policy with an
+// artifact's own declared limits (Decision.ArtifactLimits), if any,
+// taking the more restrictive value for each numeric field and the
+// intersection of content-type allowlists when the artifact declares one.
+// The artifact can only ever tighten the effective policy below what the
+// server allows, never widen it -- the same "manifest never widens the
+// plan's authority" principle already applied to hosts, applied here to
+// response/redirect limits. Call this once per request, after Authorize
+// succeeds, and pass the result to Forward instead of the raw server
+// policy directly.
+func MergeForwardPolicy(serverPolicy ForwardPolicy, artifactLimits *ForwardPolicy) ForwardPolicy {
+	if artifactLimits == nil {
+		return serverPolicy
+	}
+	merged := serverPolicy
+	if artifactLimits.MaxRedirects < merged.MaxRedirects {
+		merged.MaxRedirects = artifactLimits.MaxRedirects
+	}
+	if artifactLimits.MaxResponseBytes < merged.MaxResponseBytes {
+		merged.MaxResponseBytes = artifactLimits.MaxResponseBytes
+	}
+	if len(artifactLimits.AllowedContentTypes) > 0 {
+		if len(merged.AllowedContentTypes) == 0 {
+			merged.AllowedContentTypes = artifactLimits.AllowedContentTypes
+		} else {
+			merged.AllowedContentTypes = intersectContentTypes(merged.AllowedContentTypes, artifactLimits.AllowedContentTypes)
+		}
+	}
+	return merged
+}
+
+func intersectContentTypes(a, b []string) []string {
+	intersection := make([]string, 0, len(a))
+	for _, valueA := range a {
+		for _, valueB := range b {
+			if strings.EqualFold(valueA, valueB) {
+				intersection = append(intersection, valueA)
+				break
+			}
+		}
+	}
+	return intersection
+}
+
 // Forward sends an independently rendered, already-authorized request and
 // enforces redirect and response bounds without inspecting response body
 // text. It takes the Decision returned by Authorize -- not a second,
@@ -127,17 +188,25 @@ func Forward(decision Decision, policy ForwardPolicy, bindings *SecretBindings, 
 	for {
 		response, err := transport(outbound, policy.MaxResponseBytes)
 		if err != nil {
-			reason := string(Redact([]byte(err.Error()), secretValues))
 			var tooLarge *ResponseTooLargeError
 			if errors.As(err, &tooLarge) {
+				reason := string(Redact([]byte(err.Error()), secretValues))
 				return forwardDenied(decision, secretValues, "response_too_large", reason)
+			}
+			// Classify from the ORIGINAL error, before redaction discards its
+			// type information (a redacted error is just text by then).
+			class := "transient"
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				class = "timeout"
 			}
 			// The transport received the resolved (secret-bearing) outbound
 			// request, and a real HTTP client's error text commonly echoes
 			// the request URL or other details. Redact before returning so
 			// a transport that does this (buggy or malicious) can't hand a
 			// raw credential back to the caller through an error message.
-			return OutboundResponse{}, nil, errors.New(reason)
+			reason := string(Redact([]byte(err.Error()), secretValues))
+			return OutboundResponse{}, nil, &TransportError{Class: class, Err: errors.New(reason)}
 		}
 		location := headerValue(response.Headers, "Location")
 		if response.Status >= 300 && response.Status < 400 && location != "" {
@@ -231,7 +300,7 @@ func contentTypeAllowed(contentType string, allowed []string) bool {
 // Always redact secretValues out of reason before it leaves this function.
 func forwardDenied(decision Decision, secretValues []string, code, reason string) (OutboundResponse, *SecurityEvent, error) {
 	return OutboundResponse{}, &SecurityEvent{
-		Code: code, Reason: string(Redact([]byte(reason), secretValues)),
+		Code: code, FailureClass: "permission_denied", Reason: string(Redact([]byte(reason), secretValues)),
 		NodeVersionHash: decision.NodeVersionHash, RunID: decision.RunID,
 		StepSeq: decision.StepSeq, StepID: decision.StepID,
 	}, nil

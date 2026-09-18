@@ -41,6 +41,22 @@ type Decision struct {
 	Reason           string
 	SecurityEvent    *SecurityEvent
 
+	// ArtifactLimits is populated from the signed artifact's own
+	// "runtime_limits" (SPEC.md section 5), if it declares one -- nil
+	// otherwise. Found missing during a whole-phase audit: ForwardPolicy
+	// used to be a single process-wide value the caller supplied, with
+	// nothing read from the artifact at all, so two artifacts with
+	// different signed limits got the identical effective policy, and a
+	// server configured more permissively than a specific artifact's own
+	// limits silently widened that artifact's authority. The caller (e.g.
+	// server.go) is expected to merge this with its own configured
+	// ForwardPolicy using MergeForwardPolicy, taking the more restrictive
+	// value for each field -- the artifact can only ever tighten its own
+	// effective policy, never widen it beyond what the server allows,
+	// matching the same "manifest never widens the plan's authority"
+	// principle already applied to hosts.
+	ArtifactLimits *ForwardPolicy
+
 	// verified is deliberately unexported. Go forbids setting an
 	// unexported struct field from outside its declaring package, so a
 	// caller in a different package (a real orchestrator or HTTP handler,
@@ -68,6 +84,7 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 		return deny(decision, "artifact_not_found", "artifact not found")
 	}
 	decision.ArtifactFound = true
+	decision.ArtifactLimits = manifestRuntimeLimits(manifest)
 	step, ok := findStep(manifest, request.StepID)
 	if !ok {
 		return deny(decision, "step_not_found", "step not found")
@@ -145,7 +162,7 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 func deny(decision Decision, code, reason string) Decision {
 	decision.Reason = reason
 	decision.SecurityEvent = &SecurityEvent{
-		Code: code, Reason: reason,
+		Code: code, FailureClass: "permission_denied", Reason: reason,
 		NodeVersionHash: decision.NodeVersionHash, RunID: decision.RunID,
 		StepSeq: decision.StepSeq, StepID: decision.StepID,
 	}
@@ -201,6 +218,53 @@ func findStep(manifest map[string]any, stepID string) (map[string]any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// manifestRuntimeLimits reads an optional "runtime_limits" object at the
+// manifest's own top level (a sibling of "plan"/"hosts"/"steps", matching
+// SPEC.md section 5's example -- not nested inside the plan, since it is a
+// property of the artifact/node, not of an individual step). Returns nil
+// if absent or malformed; a malformed or missing block means "the artifact
+// declares no limits of its own," not a denial -- the caller's own
+// configured ForwardPolicy still applies in that case.
+func manifestRuntimeLimits(manifest map[string]any) *ForwardPolicy {
+	limits, ok := manifest["runtime_limits"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	policy := &ForwardPolicy{}
+	if value, ok := manifestInt(limits["max_redirects"]); ok {
+		policy.MaxRedirects = value
+	} else {
+		return nil
+	}
+	if value, ok := manifestInt(limits["max_output_bytes"]); ok {
+		policy.MaxResponseBytes = value
+	} else {
+		return nil
+	}
+	if rawTypes, ok := limits["allowed_content_types"].([]any); ok {
+		for _, rawType := range rawTypes {
+			if contentType, ok := rawType.(string); ok {
+				policy.AllowedContentTypes = append(policy.AllowedContentTypes, contentType)
+			}
+		}
+	}
+	return policy
+}
+
+// manifestInt reads a JSON number decoded via decodeJSONMap's UseNumber
+// (so it arrives as json.Number, not float64) as a non-negative int.
+func manifestInt(value any) (int, bool) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := number.Int64()
+	if err != nil || parsed < 0 || parsed > int64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(parsed), true
 }
 
 func planDocument(manifest map[string]any) map[string]any {

@@ -82,7 +82,11 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	response, event, err := Forward(decision, server.Policy, server.Bindings, server.Store, server.Transport)
+	// The artifact's own signed runtime_limits (if it declares any) can only
+	// tighten server.Policy, never widen it -- see MergeForwardPolicy and
+	// Decision.ArtifactLimits' doc comments.
+	policy := MergeForwardPolicy(server.Policy, decision.ArtifactLimits)
+	response, event, err := Forward(decision, policy, server.Bindings, server.Store, server.Transport)
 	if event != nil {
 		// Authorization succeeded, but the upstream response violated an
 		// enforced proxy policy; Bad Gateway identifies that boundary.
@@ -102,6 +106,18 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		var failure *FailureClassError
 		if errors.As(err, &failure) {
 			writeJSON(writer, http.StatusForbidden, map[string]string{"failure_class": failure.Class, "error": failure.Error()})
+			return
+		}
+		// A network/connectivity failure from the transport (SPEC.md section
+		// 7: "transient" or "timeout", both retryable) -- found missing
+		// during a whole-phase audit alongside the auth case above. Errors
+		// that reach here unclassified (a decode failure, a nil transport,
+		// an invalid rendered URL) are internal proxy faults SPEC's failure
+		// classes don't model; they stay in the generic bucket rather than
+		// being mislabeled with a class that doesn't fit them.
+		var transportErr *TransportError
+		if errors.As(err, &transportErr) {
+			writeJSON(writer, http.StatusBadGateway, map[string]string{"failure_class": transportErr.Class, "error": transportErr.Error()})
 			return
 		}
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "upstream request failed"})

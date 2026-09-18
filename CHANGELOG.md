@@ -7,6 +7,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### All 5 tracked whole-phase audit findings fixed (2026-09-19)
+
+The whole-phase audit below left 5 findings tracked but unfixed. All 5
+are now fixed, at the user's request.
+
+**High — FIXED**
+- ~~Authorization was fully replayable~~ -- `JournalEntry` gained a
+  `Consumed` flag; `Authorize` denies (`replay_denied`) any further
+  authorization of an entry that already delivered one complete response.
+  CLAUDE.md's existing append-only-journal invariant means a legitimate
+  retry is expected under a *new* `step_seq`, so this doesn't block
+  retries. `server.go` marks consumed immediately before writing the
+  successful response. `TestServerDeniesReplayOfCompletedRequest` added.
+
+**Medium — FIXED**
+- ~~`POST /v1/authorize` had no authentication~~ -- added a shared-secret
+  bearer check (`Server.AuthToken`, constant-time compared), failing
+  closed when unset. `TestServerRequiresAuthentication` added.
+- ~~`SecretBindings` was an unsynchronized plain map~~ -- converted to a
+  mutex-guarded struct (`NewSecretBindings`/`Bind`), matching the other
+  three stores. `TestSecretBindingsConcurrentAccessDoesNotPanic` added.
+- ~~`ForwardPolicy` never read a signed artifact's own `runtime_limits`~~
+  -- `Authorize` now parses an optional top-level `runtime_limits` block
+  onto `Decision.ArtifactLimits`; new `MergeForwardPolicy` combines it
+  with the caller's policy, always taking the more restrictive value --
+  the artifact can tighten its effective policy, never widen it.
+  `TestServerEnforcesArtifactRuntimeLimitsOverServerPolicy` drives a real
+  HTTP round trip proving the artifact's tighter limit wins.
+
+**Low — FIXED**
+- ~~Failure classification (SPEC.md §7) was incomplete~~ -- `SecurityEvent`
+  gained a `FailureClass` field (`"permission_denied"` for every denial
+  in this package); a new `TransportError` type classifies network
+  failures as `"timeout"` or `"transient"`, computed from the original
+  error (via `net.Error.Timeout()`) before redaction discards its type
+  information. Internal, effectively-unreachable proxy faults (decode
+  failures, nil transport, invalid URLs) deliberately stay unclassified
+  rather than mislabeled.
+
+Fixing replay protection required restructuring two `probe.go` cases
+(injection, deleted-credential) that resubmitted the same `(run_id,
+step_seq)` twice -- now each registers its own fresh journal entry,
+matching what two independent workflow runs would actually do -- plus a
+`"_probe_name"` manifest discriminator so same-upstream fixtures stop
+colliding on `ArtifactCache.Push`'s immutability check. The latency
+benchmark now pre-registers 150 distinct entries instead of resending one
+request 150 times (p95 unaffected, still comfortably under 25 ms).
+
+`go vet`, `gofmt`, full `go test ./...`, `gate-2a`/`2b`/`2c`/`2d`, `make
+security`, `make check`, `make conform` all green, no regressions.
+
 ### Whole-phase Phase 2 audit (2026-09-19) — 2 fixed, 5 tracked
 
 Every prior 2a/2b/2c/2d audit was scoped to its own milestone's files.

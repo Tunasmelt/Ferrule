@@ -258,9 +258,9 @@
   "phase2-fixes": {
     "milestone": "phase2-fixes",
     "owner": "claude-code",
-    "status": "in_progress",
+    "status": "done",
     "startedAt": "2026-09-18T21:14:29.288Z",
-    "endedAt": null,
+    "endedAt": "2026-09-18T21:33:28.974Z",
     "note": ""
   }
 }

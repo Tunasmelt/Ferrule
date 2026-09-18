@@ -905,67 +905,84 @@ the first pass's findings; Codex found the most serious issue.
   decode ever failed. Fixed with `http.MaxBytesReader` (1 MiB, matching
   the existing response-body-size convention).
   `TestServerRejectsOversizedRequestBodyOverHTTP` added.
-- **Tracked (High):** authorization is fully replayable — a successful
-  `Authorize`+`Forward` has no single-use marker, and `Forward`'s
-  redirect/request budget is a fresh local variable on every HTTP call.
-  Anyone who captures one accepted request (most realistically: a
-  compromised worker, which already has everything needed to construct
-  one) can resubmit it indefinitely, re-executing the upstream side
-  effect and getting a fresh budget each time. Not fixed here: a correct
-  fix needs to track step-completion state across calls (SPEC.md's
-  `idempotency` field and the run-journal-based state machine belong to
-  Phase 5's durable execution, which doesn't exist yet) — naively
-  marking a journal entry "consumed" on first use would also break
-  legitimate retries of a transiently-failed step, which is explicitly
-  a required behavior (5a's failure-class routing). This needs Phase 5's
-  machinery to do correctly, not a proxy-local patch.
-- **Tracked (Medium):** `POST /v1/authorize` has no authentication of its
-  caller. Traced concretely: a network-reachable-only attacker cannot
-  forge an accepted request from nothing — they would need to already
-  know an exact `step_input_digest`, which requires already having
-  visibility into the real journal's contents — so this doesn't hand out
-  arbitrary SSRF or secret access on its own. But identifiers here
-  (artifact hashes, run IDs, digests) are being used as a de facto
-  bearer capability rather than real authentication, and combined with
-  the replay finding above, one observed accepted request becomes an
-  indefinitely reusable capability. The endpoint is only safe today under
-  an external assumption (network isolation between worker and proxy)
-  that nothing in the HTTP contract itself represents or enforces. Real
-  authentication (or authenticated workload identity) should exist
-  before this is treated as a production trust boundary.
-- **Tracked (Medium):** `SecretBindings` is a plain unsynchronized
-  `map[string]string`, unlike `ArtifactCache`/`MemoryRunJournal`/
-  `CredentialStore`, which all use a mutex. No remote mutation path
-  exists today, so this isn't currently reachable, but a future
-  credential-rebind/rotation operation running concurrently with live
-  traffic would be a real Go data race (`concurrent map read and map
-  write`, which crashes the process, not a benign inconsistency). Not
-  fixed here because doing so properly means changing `SecretBindings`
-  from a map literal into a constructed, mutex-guarded type across every
-  call site (`forward.go`, `secrets.go`, and ~8 test call sites) for a
-  risk with no live trigger yet; flagged so whoever adds a rebind/rotation
-  path does it correctly from the start.
-- **Tracked (Medium):** `ForwardPolicy` is a single process-wide value
-  the caller supplies, never derived from a signed artifact's own
-  `runtime_limits` (SPEC.md §5) — two artifacts with different signed
-  limits get the identical effective policy today. This isn't a shape
-  bug (no file was found nesting `runtime_limits` incorrectly); it's that
-  nothing reads it at all, because no schema in this codebase defines it
-  yet (SPEC.md §5's full node manifest, including `runtime_limits`, has
-  never been built as real, ingestible schema — see milestone 2c's own
-  `ForwardPolicy` scope note). Properly belongs to whichever milestone
-  formalizes the full node manifest.
-- **Tracked (Low):** failure classification (SPEC.md §7) is incomplete —
-  most Authorize-side denials (artifact/step/journal/digest failures)
-  return a bare reason with no `SecurityEvent`/failure class at all, and
-  network/transport errors surface as an unclassified generic 502.
-  Doesn't widen authority, but can produce wrong retry/routing behavior
-  once something downstream actually branches on failure class. A
-  smaller, related inconsistency: `invalid_rendered_request` (Authorize)
-  gets 403 while a similar-character internal failure discovered later
-  in `Forward` (a `decodeOutboundRequest` failure) gets a generic 502 —
-  both are effectively unreachable in practice since `RenderRequest`
-  always produces valid JSON, which is why this is Low, not Medium.
+- **Fixed 2026-09-19 (was: Tracked, High):** authorization was fully
+  replayable — a successful `Authorize`+`Forward` had no single-use
+  marker, and `Forward`'s redirect/request budget was a fresh local
+  variable on every HTTP call, so anyone who captured one accepted
+  request could resubmit it indefinitely, re-executing the upstream side
+  effect and getting a fresh budget each time. Fixed: `JournalEntry`
+  gained a `Consumed` flag; `Authorize` denies (`replay_denied`) any
+  further authorization of an entry that already delivered one complete
+  response. This does not break legitimate retries: CLAUDE.md already
+  establishes the run journal as append-only, so a retry (whether after a
+  transient failure or a retryable upstream response) is expected to be
+  journaled under a *new* `step_seq`, never by resubmitting the same one
+  — marking consumed after any fully-delivered response (the proxy
+  correctly never interprets upstream HTTP status as success/failure,
+  that's the interpreter's routing job) is therefore the right proxy-level
+  granularity. `server.go` marks the entry consumed immediately before
+  writing the successful response, not after, so a write failure can't
+  leave a delivered side effect replayable.
+  `TestServerDeniesReplayOfCompletedRequest` added.
+- **Fixed 2026-09-19 (was: Tracked, Medium):** `POST /v1/authorize` had no
+  authentication of its caller. Fixed with a shared-secret bearer check
+  (`Server.AuthToken`, compared with `crypto/subtle.ConstantTimeCompare`)
+  — proportionate to there being no other auth mechanism anywhere in this
+  project yet. An unset `AuthToken` fails closed (denies every request)
+  rather than silently disabling authentication.
+  `TestServerRequiresAuthentication` added (missing header, wrong token,
+  and the fail-closed-with-no-token-configured case).
+- **Fixed 2026-09-19 (was: Tracked, Medium):** `SecretBindings` was a
+  plain unsynchronized `map[string]string`, unlike `ArtifactCache`/
+  `MemoryRunJournal`/`CredentialStore`, which all use a mutex. Converted
+  to a mutex-guarded struct (`NewSecretBindings`/`Bind`/an unexported
+  `resolve`) across every call site. `TestSecretBindingsConcurrentAccessDoesNotPanic`
+  added.
+- **Fixed 2026-09-19 (was: Tracked, Medium):** `ForwardPolicy` was a
+  single process-wide value the caller supplied, never derived from a
+  signed artifact's own `runtime_limits` (SPEC.md §5) — two artifacts with
+  different signed limits got the identical effective policy. Fixed:
+  `Authorize` now parses an optional top-level `runtime_limits` block from
+  the manifest onto `Decision.ArtifactLimits`, and a new
+  `MergeForwardPolicy(serverPolicy, artifactLimits)` combines it with the
+  caller's configured policy, taking the more restrictive numeric value
+  and the intersection of content-type allowlists — the artifact can only
+  ever tighten its effective policy, never widen it, matching the same
+  principle already applied to hosts. `server.go` calls this before every
+  `Forward`. `TestMergeForwardPolicyTakesMoreRestrictiveValues` and
+  `TestServerEnforcesArtifactRuntimeLimitsOverServerPolicy` added (the
+  latter drives a real HTTP round trip where the server alone would allow
+  a response the artifact's own tighter limit correctly denies).
+- **Fixed 2026-09-19 (was: Tracked, Low):** failure classification
+  (SPEC.md §7) was incomplete — no `SecurityEvent` carried a named failure
+  class, and network/transport errors surfaced as an unclassified generic
+  502. Fixed: `SecurityEvent` gained a `FailureClass` field, set to
+  `"permission_denied"` for every denial in this package (an unauthorized
+  or policy-violating request is exactly what that class means: no retry,
+  security event). A new `TransportError` type carries `"timeout"` or
+  `"transient"` for network/connectivity failures (classified from the
+  original error via `net.Error`'s `Timeout()` *before* its text is
+  redacted, since a redacted error is just a string by then and loses that
+  type information). Errors that are neither a `FailureClassError`, a
+  `TransportError`, nor a `SecurityEvent` (a decode failure, a nil
+  transport, an invalid rendered URL — internal proxy faults SPEC's
+  classes don't model, and effectively unreachable in practice) stay in
+  the generic, unclassified bucket rather than being mislabeled with a
+  class that doesn't fit them.
+  `TestSecurityEventCarriesPermissionDeniedFailureClass` and
+  `TestServerClassifiesTransportTimeoutAndTransientFailures` added.
+
+All five tracked findings from this audit are now fixed. Also fixed along
+the way: `probe.go`'s injection and deleted-credential probe cases used
+to resubmit the same `(run_id, step_seq)` twice, which now correctly hits
+replay protection — restructured to register a fresh journal entry per
+case, matching what two truly independent workflow runs would do, plus a
+`"_probe_name"` manifest discriminator so fixtures pointed at the same
+test upstream stop colliding on `ArtifactCache.Push`'s content-addressed
+immutability check. The latency benchmark now pre-registers 150 distinct
+journal entries instead of resending one request 150 times, for the same
+replay-protection reason (p95 unaffected: still comfortably under 25 ms
+across repeated runs).
 
 Re-verified against `gate-2a`/`2b`/`2c`/`2d`, `make security`, `make
 check`, `make conform` — all green, no regressions. See `CHANGELOG.md`
