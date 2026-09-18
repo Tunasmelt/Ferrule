@@ -12,7 +12,7 @@ func TestPermissionProbes(t *testing.T) {
 	cache := NewArtifactCache()
 	journal := NewMemoryRunJournal()
 	store := &CredentialStore{}
-	bindings := SecretBindings{}
+	bindings := NewSecretBindings(nil)
 	policy := ForwardPolicy{
 		MaxRedirects:        2,
 		MaxResponseBytes:    128,
@@ -20,12 +20,12 @@ func TestPermissionProbes(t *testing.T) {
 	}
 	proxyServer := httptest.NewServer((&Server{
 		Cache: cache, Journal: journal, Store: store, Bindings: bindings,
-		Policy: policy, Transport: NewHTTPTransport(&http.Client{}),
+		Policy: policy, Transport: NewHTTPTransport(&http.Client{}), AuthToken: testAuthToken,
 	}).Handler())
 	defer proxyServer.Close()
 
 	results := RunPermissionProbes(proxyServer.URL, ProbeEnvironment{
-		Cache: cache, Journal: journal, Store: store, Bindings: bindings, Policy: policy,
+		Cache: cache, Journal: journal, Store: store, Bindings: bindings, Policy: policy, AuthToken: testAuthToken,
 	})
 	var failures []string
 	for _, result := range results {

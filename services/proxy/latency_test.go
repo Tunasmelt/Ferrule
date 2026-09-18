@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,26 +31,39 @@ func TestProxyLatencyP95Under50RPS(t *testing.T) {
 
 	cache := NewArtifactCache()
 	journal := NewMemoryRunJournal()
-	request, err := registerProbeFixture(cache, journal, "latency", upstream.URL, http.MethodGet, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	proxyServer := httptest.NewServer((&Server{
-		Cache: cache, Journal: journal, Store: &CredentialStore{},
+		Cache: cache, Journal: journal, Store: &CredentialStore{}, AuthToken: testAuthToken,
 		Policy: ForwardPolicy{MaxResponseBytes: 1024}, Transport: NewHTTPTransport(&http.Client{}),
 	}).Handler())
 	defer proxyServer.Close()
 
 	const requestCount = 150
+	// Replay protection (found during the whole-phase audit) denies a
+	// second authorization of the same (run_id, step_seq) once it has
+	// completed once, so this benchmark needs its own fresh journal entry
+	// per request -- exactly as 150 independent workflow runs would have --
+	// not the same request resent 150 times. Pre-register all of them
+	// outside the timed loop so artifact signing/journaling overhead
+	// (irrelevant to what this benchmark measures) doesn't pollute the
+	// per-request latency samples.
+	requests := make([]AuthorizationRequest, requestCount)
+	for i := range requests {
+		request, err := registerProbeFixture(cache, journal, fmt.Sprintf("latency-%d", i), upstream.URL, http.MethodGet, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requests[i] = request
+	}
+
 	latencies := make([]time.Duration, 0, requestCount)
 	next := time.Now()
-	for range requestCount {
+	for _, request := range requests {
 		now := time.Now()
 		if now.Before(next) {
 			time.Sleep(next.Sub(now))
 		}
 		started := time.Now()
-		response, body, err := sendProbeRequest(proxyServer.URL, request)
+		response, body, err := sendProbeRequest(proxyServer.URL, testAuthToken, request)
 		latencies = append(latencies, time.Since(started))
 		if err != nil {
 			t.Fatal(err)

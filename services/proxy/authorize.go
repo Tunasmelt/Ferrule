@@ -65,20 +65,17 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 	}
 	manifest, ok := cache.Get(request.NodeVersionHash)
 	if !ok {
-		decision.Reason = "artifact not found"
-		return decision
+		return deny(decision, "artifact_not_found", "artifact not found")
 	}
 	decision.ArtifactFound = true
 	step, ok := findStep(manifest, request.StepID)
 	if !ok {
-		decision.Reason = "step not found"
-		return decision
+		return deny(decision, "step_not_found", "step not found")
 	}
 	decision.StepFound = true
 	entry, ok := journal.LookupInput(request.RunID, request.StepSeq)
 	if !ok {
-		decision.Reason = "journal input not found"
-		return decision
+		return deny(decision, "journal_not_found", "journal input not found")
 	}
 	decision.JournalFound = true
 	// The journal is keyed only by (run_id, step_seq); without this check,
@@ -90,9 +87,15 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 	if entry.NodeVersionHash != request.NodeVersionHash || entry.StepID != request.StepID {
 		return deny(decision, "journal_step_mismatch", "journal entry was not recorded for this artifact and step")
 	}
+	// A journal entry that already delivered one complete response is a
+	// one-time capability, not a reusable one -- see JournalEntry.Consumed's
+	// doc comment for why this is the correct granularity, not a block on
+	// legitimate retries (which are journaled under a new step_seq).
+	if entry.Consumed {
+		return deny(decision, "replay_denied", "this run/step has already completed and cannot be authorized again")
+	}
 	if entry.Digest != request.StepInputDigest {
-		decision.Reason = "step input digest mismatch"
-		return decision
+		return deny(decision, "digest_mismatch", "step input digest mismatch")
 	}
 	decision.DigestMatched = true
 	envelope, err := decodeJSONMap(entry.Context)

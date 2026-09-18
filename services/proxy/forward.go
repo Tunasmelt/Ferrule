@@ -103,7 +103,7 @@ type ForwardPolicy struct {
 // previously any caller could forge Decision{ChecksPassed: true, ...}
 // and obtain full secret resolution and forwarding with no artifact
 // lookup, journal check, host check, or byte comparison ever having run.
-func Forward(decision Decision, policy ForwardPolicy, bindings SecretBindings, store *CredentialStore, transport Transport) (OutboundResponse, *SecurityEvent, error) {
+func Forward(decision Decision, policy ForwardPolicy, bindings *SecretBindings, store *CredentialStore, transport Transport) (OutboundResponse, *SecurityEvent, error) {
 	if !decision.ChecksPassed || !decision.verified {
 		return OutboundResponse{}, nil, errors.New("cannot forward an unauthorized request")
 	}

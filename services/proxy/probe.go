@@ -27,11 +27,12 @@ type ProbeResult struct {
 // ProbeEnvironment is the mutable state owned by the already-running proxy.
 // The harness registers a distinct signed artifact and journal entry per case.
 type ProbeEnvironment struct {
-	Cache    *ArtifactCache
-	Journal  RunJournal
-	Store    *CredentialStore
-	Bindings SecretBindings
-	Policy   ForwardPolicy
+	Cache     *ArtifactCache
+	Journal   RunJournal
+	Store     *CredentialStore
+	Bindings  *SecretBindings
+	Policy    ForwardPolicy
+	AuthToken string
 }
 
 // RunPermissionProbes drives the running proxy exclusively through its HTTP
@@ -56,7 +57,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	request, err := registerProbeFixture(environment.Cache, environment.Journal, "url-mismatch", ordinary.URL+"/planned", http.MethodGet, nil)
 	if err == nil {
 		request.CanonicalizedRequest = canonicalProbeRequest(http.MethodGet, ordinary.URL+"/submitted", nil)
-		err = expectProbeEvent(baseURL, request, http.StatusForbidden, "request_mismatch")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusForbidden, "request_mismatch")
 	}
 	add("submitted URL mismatch", err)
 
@@ -65,14 +66,14 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 		"plan":         map[string]any{"hosts": []string{"not-" + probeHost(ordinary.URL)}, "steps": []any{probeStep(ordinary.URL, http.MethodGet, nil)}},
 	}, canonicalProbeRequest(http.MethodGet, ordinary.URL, nil))
 	if err == nil {
-		err = expectProbeEvent(baseURL, request, http.StatusForbidden, "undeclared_host")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusForbidden, "undeclared_host")
 	}
 	add("capabilities cannot widen plan hosts", err)
 
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "method-mismatch", ordinary.URL+"/method", http.MethodGet, nil)
 	if err == nil {
 		request.CanonicalizedRequest = canonicalProbeRequest(http.MethodDelete, ordinary.URL+"/method", nil)
-		err = expectProbeEvent(baseURL, request, http.StatusForbidden, "request_mismatch")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusForbidden, "request_mismatch")
 	}
 	add("submitted method mismatch", err)
 
@@ -88,7 +89,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	defer crossHost.Close()
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "cross-host", crossHost.URL, http.MethodGet, nil)
 	if err == nil {
-		err = expectProbeEvent(baseURL, request, http.StatusBadGateway, "cross_host_redirect")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusBadGateway, "cross_host_redirect")
 		if err == nil && redirectTargetCalls.Load() != 0 {
 			err = fmt.Errorf("redirect target fetched %d times", redirectTargetCalls.Load())
 		}
@@ -122,13 +123,13 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	over, overErr := registerProbeFixture(environment.Cache, environment.Journal, "redirect-over", redirects.URL+"/over/0", http.MethodGet, nil)
 	err = withinErr
 	if err == nil {
-		_, _, err = expectProbeStatus(baseURL, within, http.StatusOK)
+		_, _, err = expectProbeStatus(baseURL, environment.AuthToken, within, http.StatusOK)
 	}
 	if err == nil {
 		err = overErr
 	}
 	if err == nil {
-		err = expectProbeEvent(baseURL, over, http.StatusBadGateway, "request_budget_exceeded")
+		err = expectProbeEvent(baseURL, environment.AuthToken, over, http.StatusBadGateway, "request_budget_exceeded")
 	}
 	add("same-host redirect budget", err)
 
@@ -139,7 +140,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	defer oversized.Close()
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "oversized", oversized.URL, http.MethodGet, nil)
 	if err == nil {
-		err = expectProbeEvent(baseURL, request, http.StatusBadGateway, "response_too_large")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusBadGateway, "response_too_large")
 	}
 	add("oversized response denied", err)
 
@@ -150,7 +151,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	defer disallowed.Close()
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "content-type", disallowed.URL, http.MethodGet, nil)
 	if err == nil {
-		err = expectProbeEvent(baseURL, request, http.StatusBadGateway, "disallowed_content_type")
+		err = expectProbeEvent(baseURL, environment.AuthToken, request, http.StatusBadGateway, "disallowed_content_type")
 	}
 	add("disallowed content type denied", err)
 
@@ -171,11 +172,21 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 		}
 	}))
 	defer injectionUpstream.Close()
-	request, err = registerProbeFixture(environment.Cache, environment.Journal, "injection", injectionUpstream.URL, http.MethodGet, nil)
+	// Two distinct registrations (distinct run_ids), not one request sent
+	// twice -- replay protection now denies a second authorization of the
+	// same (run_id, step_seq) once it has completed once, so this probe
+	// needs its own fresh journal entry for each of the control and
+	// injected calls, exactly as two independent workflow runs would.
+	controlRequest, controlRegErr := registerProbeFixture(environment.Cache, environment.Journal, "injection-control", injectionUpstream.URL, http.MethodGet, nil)
+	injectedRequest, injectedRegErr := registerProbeFixture(environment.Cache, environment.Journal, "injection-injected", injectionUpstream.URL, http.MethodGet, nil)
+	err = controlRegErr
 	if err == nil {
-		controlResponse, control, firstErr := expectProbeStatus(baseURL, request, http.StatusOK)
+		err = injectedRegErr
+	}
+	if err == nil {
+		controlResponse, control, firstErr := expectProbeStatus(baseURL, environment.AuthToken, controlRequest, http.StatusOK)
 		inject.Store(true)
-		injectedResponse, injected, secondErr := expectProbeStatus(baseURL, request, http.StatusOK)
+		injectedResponse, injected, secondErr := expectProbeStatus(baseURL, environment.AuthToken, injectedRequest, http.StatusOK)
 		switch {
 		case firstErr != nil:
 			err = firstErr
@@ -190,7 +201,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	add("instruction-shaped response is inert", err)
 
 	const secret = "permission-probe-secret"
-	environment.Bindings["TOKEN"] = "probe-ref"
+	environment.Bindings.Bind("TOKEN", "probe-ref")
 	environment.Store.Put("probe-ref", secret)
 	var observedSecret atomic.Bool
 	secretUpstream := newProbeUpstream(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -202,7 +213,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	secretHeaders := map[string]string{"Authorization": "Bearer {{ secret.TOKEN }}"}
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "secret-resolution", secretUpstream.URL, http.MethodGet, secretHeaders)
 	if err == nil {
-		_, _, err = expectProbeStatus(baseURL, request, http.StatusOK)
+		_, _, err = expectProbeStatus(baseURL, environment.AuthToken, request, http.StatusOK)
 		if err == nil && !observedSecret.Load() {
 			err = fmt.Errorf("upstream did not observe the resolved credential")
 		}
@@ -210,11 +221,20 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	add("secret resolves end-to-end", err)
 
 	environment.Store.Delete("probe-ref")
-	// A deleted/missing credential is an authorization-shaped failure, not
-	// an upstream problem, so server.go reports it the same way as the
-	// pre-Forward denials above (403), distinguished from those by a
-	// failure_class field rather than a SecurityEvent.
-	_, body, err := expectProbeStatus(baseURL, request, http.StatusForbidden)
+	// A fresh registration, not a resubmission of the request above -- that
+	// one already completed successfully and replay protection would now
+	// deny it with replay_denied instead of exercising the auth failure
+	// this case is actually testing.
+	deletedCredentialRequest, deletedCredentialRegErr := registerProbeFixture(environment.Cache, environment.Journal, "secret-deleted", secretUpstream.URL, http.MethodGet, secretHeaders)
+	err = deletedCredentialRegErr
+	var body []byte
+	if err == nil {
+		// A deleted/missing credential is an authorization-shaped failure, not
+		// an upstream problem, so server.go reports it the same way as the
+		// pre-Forward denials above (403), distinguished from those by a
+		// failure_class field rather than a SecurityEvent.
+		_, body, err = expectProbeStatus(baseURL, environment.AuthToken, deletedCredentialRequest, http.StatusForbidden)
+	}
 	if err == nil {
 		var failure struct {
 			FailureClass string `json:"failure_class"`
@@ -236,7 +256,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	defer echo.Close()
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "secret-echo", echo.URL, http.MethodGet, secretHeaders)
 	if err == nil {
-		response, responseBody, requestErr := expectProbeStatus(baseURL, request, http.StatusOK)
+		response, responseBody, requestErr := expectProbeStatus(baseURL, environment.AuthToken, request, http.StatusOK)
 		err = requestErr
 		if err == nil && (bytes.Contains(responseBody, []byte(secret)) || strings.Contains(response.Header.Get("X-Echo"), secret)) {
 			err = fmt.Errorf("raw secret reached caller: headers=%v body=%s", response.Header, responseBody)
@@ -251,7 +271,7 @@ func RunPermissionProbes(baseURL string, environment ProbeEnvironment) []ProbeRe
 	defer metadataEcho.Close()
 	request, err = registerProbeFixture(environment.Cache, environment.Journal, "metadata-echo", metadataEcho.URL, http.MethodGet, secretHeaders)
 	if err == nil {
-		response, responseBody, requestErr := expectProbeStatus(baseURL, request, http.StatusBadGateway)
+		response, responseBody, requestErr := expectProbeStatus(baseURL, environment.AuthToken, request, http.StatusBadGateway)
 		err = requestErr
 		if err == nil && (bytes.Contains(responseBody, []byte(secret)) || strings.Contains(fmt.Sprint(response.Header), secret)) {
 			err = fmt.Errorf("security event leaked raw secret: headers=%v body=%s", response.Header, responseBody)
@@ -289,7 +309,14 @@ func canonicalProbeRequest(method, rawURL string, headers map[string]string) jso
 }
 
 func registerProbeFixture(cache *ArtifactCache, journal RunJournal, name, rawURL, method string, headers map[string]string) (AuthorizationRequest, error) {
-	manifest := map[string]any{"hosts": []string{probeHost(rawURL)}, "steps": []any{probeStep(rawURL, method, headers)}}
+	// "_probe_name" is not read anywhere (findStep/hostDeclared only look at
+	// "hosts"/"steps"/"plan") -- it exists purely so two fixtures that would
+	// otherwise describe an identical plan (same host, method, headers) hash
+	// to distinct artifacts instead of colliding on ArtifactCache.Push's
+	// immutability check ("artifact already cached"), which multiple probe
+	// cases now need since each authorization requires its own fresh journal
+	// entry under replay protection.
+	manifest := map[string]any{"hosts": []string{probeHost(rawURL)}, "steps": []any{probeStep(rawURL, method, headers)}, "_probe_name": name}
 	return registerProbeManifest(cache, journal, name, manifest, canonicalProbeRequest(method, rawURL, headers))
 }
 
@@ -322,7 +349,7 @@ func registerProbeManifest(cache *ArtifactCache, journal RunJournal, name string
 	return AuthorizationRequest{NodeVersionHash: hash, RunID: runID, StepSeq: 1, StepID: "fetch", StepInputDigest: entry.Digest, CanonicalizedRequest: submitted}, nil
 }
 
-func sendProbeRequest(baseURL string, authorization AuthorizationRequest) (*http.Response, []byte, error) {
+func sendProbeRequest(baseURL, authToken string, authorization AuthorizationRequest) (*http.Response, []byte, error) {
 	payload, err := json.Marshal(authorizationWireRequest{
 		NodeVersionHash: authorization.NodeVersionHash, RunID: authorization.RunID,
 		StepSeq: authorization.StepSeq, StepID: authorization.StepID,
@@ -331,7 +358,13 @@ func sendProbeRequest(baseURL string, authorization AuthorizationRequest) (*http
 	if err != nil {
 		return nil, nil, err
 	}
-	response, err := http.Post(strings.TrimRight(baseURL, "/")+authorizationPath, "application/json", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+authorizationPath, bytes.NewReader(payload))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -340,8 +373,8 @@ func sendProbeRequest(baseURL string, authorization AuthorizationRequest) (*http
 	return response, body, err
 }
 
-func expectProbeStatus(baseURL string, request AuthorizationRequest, status int) (*http.Response, []byte, error) {
-	response, body, err := sendProbeRequest(baseURL, request)
+func expectProbeStatus(baseURL, authToken string, request AuthorizationRequest, status int) (*http.Response, []byte, error) {
+	response, body, err := sendProbeRequest(baseURL, authToken, request)
 	if err != nil {
 		return response, body, err
 	}
@@ -351,8 +384,8 @@ func expectProbeStatus(baseURL string, request AuthorizationRequest, status int)
 	return response, body, nil
 }
 
-func expectProbeEvent(baseURL string, request AuthorizationRequest, status int, code string) error {
-	_, body, err := expectProbeStatus(baseURL, request, status)
+func expectProbeEvent(baseURL, authToken string, request AuthorizationRequest, status int, code string) error {
+	_, body, err := expectProbeStatus(baseURL, authToken, request, status)
 	if err != nil {
 		return err
 	}

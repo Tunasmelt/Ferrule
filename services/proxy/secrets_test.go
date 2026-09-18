@@ -12,7 +12,7 @@ func TestResolveSecretsFailsWithAuthAfterCredentialDeletion(t *testing.T) {
 	store := &CredentialStore{}
 	store.Put("broker-1", "token-value")
 	rendered := []byte(`{"method":"GET","url":"https://api.example.com","headers":{"Authorization":"Bearer {{ secret.acme_erp_api_key }}"},"body":null}`)
-	bindings := SecretBindings{"acme_erp_api_key": "broker-1"}
+	bindings := NewSecretBindings(map[string]string{"acme_erp_api_key": "broker-1"})
 
 	resolved, values, err := ResolveSecrets(rendered, bindings, store)
 	if err != nil || !bytes.Contains(resolved, []byte("Bearer token-value")) || len(values) != 1 || values[0] != "token-value" {
@@ -34,7 +34,7 @@ func TestResolveSecretsFailsWithAuthAfterCredentialDeletion(t *testing.T) {
 func TestResolveSecretsEscapesControlByteAsValidJSON(t *testing.T) {
 	store := &CredentialStore{}
 	store.Put("broker-1", "bell\x07value")
-	bindings := SecretBindings{"token": "broker-1"}
+	bindings := NewSecretBindings(map[string]string{"token": "broker-1"})
 	rendered := []byte(`{"method":"GET","url":"https://x.test","headers":{"Authorization":"Bearer {{ secret.token }}"},"body":null}`)
 
 	resolved, values, err := ResolveSecrets(rendered, bindings, store)
@@ -66,7 +66,7 @@ func TestForwardResolvesSecretAfterAuthorization(t *testing.T) {
 	original := append([]byte(nil), decision.RenderedRequest...)
 
 	var received OutboundRequest
-	_, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, SecretBindings{"acme_erp_api_key": "broker-1"}, store, func(request OutboundRequest, _ int) (OutboundResponse, error) {
+	_, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, NewSecretBindings(map[string]string{"acme_erp_api_key": "broker-1"}), store, func(request OutboundRequest, _ int) (OutboundResponse, error) {
 		received = request
 		return OutboundResponse{Status: 200}, nil
 	})
@@ -87,7 +87,7 @@ func TestForwardRedactsEchoedSecretFromResponse(t *testing.T) {
 	decision := authorizedDecision("https://api.example.com/start")
 	decision.RenderedRequest = []byte(`{"method":"GET","url":"https://api.example.com/start","headers":{"Authorization":"Bearer {{ secret.api_key }}"},"body":null}`)
 
-	response, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, SecretBindings{"api_key": "broker-1"}, store, func(_ OutboundRequest, _ int) (OutboundResponse, error) {
+	response, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, NewSecretBindings(map[string]string{"api_key": "broker-1"}), store, func(_ OutboundRequest, _ int) (OutboundResponse, error) {
 		return OutboundResponse{Status: 401, Headers: map[string]string{"X-Echo": "Bearer super-secret"}, Body: []byte("rejected super-secret")}, nil
 	})
 	if err != nil {
@@ -113,7 +113,7 @@ func TestForwardRedactsSecretFromDenialReason(t *testing.T) {
 	decision := authorizedDecision("https://api.example.com/start")
 	decision.RenderedRequest = []byte(`{"method":"GET","url":"https://api.example.com/start","headers":{"Authorization":"Bearer {{ secret.api_key }}"},"body":null}`)
 
-	_, event, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100, AllowedContentTypes: []string{"application/json"}}, SecretBindings{"api_key": "broker-1"}, store, func(_ OutboundRequest, _ int) (OutboundResponse, error) {
+	_, event, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100, AllowedContentTypes: []string{"application/json"}}, NewSecretBindings(map[string]string{"api_key": "broker-1"}), store, func(_ OutboundRequest, _ int) (OutboundResponse, error) {
 		return OutboundResponse{Status: 200, Headers: map[string]string{"Content-Type": "super-secret-value"}}, nil
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func TestForwardRedactsSecretFromTransportError(t *testing.T) {
 	decision := authorizedDecision("https://api.example.com/start")
 	decision.RenderedRequest = []byte(`{"method":"GET","url":"https://api.example.com/start","headers":{"Authorization":"Bearer {{ secret.api_key }}"},"body":null}`)
 
-	_, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, SecretBindings{"api_key": "broker-1"}, store, func(request OutboundRequest, _ int) (OutboundResponse, error) {
+	_, _, err := Forward(decision, ForwardPolicy{MaxResponseBytes: 100}, NewSecretBindings(map[string]string{"api_key": "broker-1"}), store, func(request OutboundRequest, _ int) (OutboundResponse, error) {
 		return OutboundResponse{}, fmt.Errorf("request failed: %+v", request)
 	})
 	if err == nil {
@@ -146,4 +146,33 @@ func TestForwardRedactsSecretFromTransportError(t *testing.T) {
 	if strings.Contains(err.Error(), "super-secret-value") {
 		t.Fatalf("transport error leaked the raw secret: %q", err.Error())
 	}
+}
+
+// Regression, found during a whole-phase audit: SecretBindings used to be a
+// plain map[string]string, unlike ArtifactCache/MemoryRunJournal/
+// CredentialStore, which all guard concurrent access with a mutex. Run
+// concurrent Bind calls alongside concurrent resolve calls (via
+// ResolveSecrets) under go test's own data-race-sensitive execution;
+// without a mutex this either panics ("concurrent map read and map write")
+// or, on this build (no cgo, so -race isn't available), can still corrupt
+// the map's internal state. The important guarantee this test locks in is
+// that SecretBindings' own exported API has no plain-map literal path left
+// that could reintroduce the unsynchronized version.
+func TestSecretBindingsConcurrentAccessDoesNotPanic(t *testing.T) {
+	bindings := NewSecretBindings(nil)
+	store := &CredentialStore{}
+	store.Put("ref", "value")
+	rendered := []byte(`{"method":"GET","url":"https://x.test","headers":{"Authorization":"Bearer {{ secret.k }}"},"body":null}`)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 500; i++ {
+			bindings.Bind("k", "ref")
+		}
+	}()
+	for i := 0; i < 500; i++ {
+		_, _, _ = ResolveSecrets(rendered, bindings, store)
+	}
+	<-done
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,13 +26,26 @@ const maxAuthorizationRequestBytes = 1_048_576
 // Server exposes POST /v1/authorize. Policy, secret bindings, credential
 // storage, and transport are injected by the caller as the deliberate v1
 // scope boundary until artifact runtime limits and infrastructure exist.
+//
+// AuthToken is required (ServeHTTP fails closed if it is empty, rather than
+// treating an unset token as "authentication disabled") -- found missing
+// during a whole-phase audit: this endpoint had no authentication at all.
+// Traced concretely at the time: a network-only attacker could not forge an
+// accepted request from nothing (it still needs an exact step_input_digest,
+// which requires journal visibility), but the identifiers involved function
+// as a de facto bearer capability rather than real authentication. This is
+// a shared-secret bearer check, not a full workload-identity system --
+// proportionate to there being no other auth mechanism anywhere in this
+// project yet, and callers are expected to reach this endpoint over a
+// private network in addition to presenting the token, not instead of it.
 type Server struct {
 	Cache     *ArtifactCache
 	Journal   RunJournal
 	Policy    ForwardPolicy
-	Bindings  SecretBindings
+	Bindings  *SecretBindings
 	Store     *CredentialStore
 	Transport Transport
+	AuthToken string
 }
 
 func (server *Server) Handler() http.Handler { return server }
@@ -44,6 +58,11 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 	if request.Method != http.MethodPost {
 		writer.Header().Set("Allow", http.MethodPost)
 		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if !authorized(server.AuthToken, request.Header.Get("Authorization")) {
+		writer.Header().Set("WWW-Authenticate", "Bearer")
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization"})
 		return
 	}
 
@@ -86,6 +105,17 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "upstream request failed"})
+		return
+	}
+	// A response is about to be fully delivered -- from here on this
+	// (run_id, step_seq) must never be authorized again (see
+	// JournalEntry.Consumed's doc comment). Mark it before writing the
+	// response, not after: if the write itself fails partway through,
+	// the caller may still have received some or all of the side effect
+	// already having happened upstream, so failing open here (leaving it
+	// replayable) would be the wrong default.
+	if err := server.Journal.MarkConsumed(authorization.RunID, authorization.StepSeq); err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to record run completion"})
 		return
 	}
 	for name, value := range response.Headers {
@@ -137,6 +167,23 @@ func decodeAuthorizationRequest(body io.Reader) (AuthorizationRequest, error) {
 		StepID: wire.StepID, StepInputDigest: wire.StepInputDigest,
 		CanonicalizedRequest: wire.CanonicalizedRequest,
 	}, nil
+}
+
+// authorized fails closed: an empty configured token never matches any
+// presented header, including another empty one, so a Server with
+// AuthToken unset denies every request rather than silently accepting all
+// of them. Uses a constant-time comparison so response timing cannot be
+// used to guess the token byte-by-byte.
+func authorized(configuredToken, presentedHeader string) bool {
+	if configuredToken == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(presentedHeader, prefix) {
+		return false
+	}
+	presented := strings.TrimPrefix(presentedHeader, prefix)
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(configuredToken)) == 1
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {

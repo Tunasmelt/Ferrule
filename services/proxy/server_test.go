@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+// testAuthToken is the shared secret every test server in this file is
+// configured with; postAuthorization and authorizedRequest attach it as a
+// Bearer token so these tests exercise the same authenticated path a real
+// caller must use.
+const testAuthToken = "test-shared-secret"
+
 func TestServerAuthorizesAndForwardsOverHTTP(t *testing.T) {
 	manifest := `{"hosts":["x.test"],"steps":[{"id":"fetch","method":"GET","url":"https://x.test/{{ input.id }}","headers":{}}]}`
 	submitted := `{"method":"GET","url":"https://x.test/42","headers":{},"body":null}`
@@ -17,8 +23,9 @@ func TestServerAuthorizesAndForwardsOverHTTP(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer((&Server{
 		Cache: cache, Journal: journal,
-		Policy: ForwardPolicy{MaxResponseBytes: 100},
-		Store:  &CredentialStore{},
+		Policy:    ForwardPolicy{MaxResponseBytes: 100},
+		Store:     &CredentialStore{},
+		AuthToken: testAuthToken,
 		Transport: func(got OutboundRequest, limit int) (OutboundResponse, error) {
 			calls.Add(1)
 			if got.URL != "https://x.test/42" || limit != 100 {
@@ -37,6 +44,109 @@ func TestServerAuthorizesAndForwardsOverHTTP(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "application/json" || string(body) != `{"ok":true}` || calls.Load() != 1 {
 		t.Fatalf("status=%d headers=%v body=%s calls=%d", response.StatusCode, response.Header, body, calls.Load())
+	}
+}
+
+// Regression, found during a whole-phase audit: POST /v1/authorize had no
+// authentication of its caller at all. Confirm a request with no
+// Authorization header, one with a wrong token, and a Server with no
+// AuthToken configured (fails closed, not "auth disabled") are all
+// rejected with 401, and the transport is never invoked for any of them.
+func TestServerRequiresAuthentication(t *testing.T) {
+	manifest := `{"hosts":["x.test"],"steps":[{"id":"fetch","method":"GET","url":"https://x.test/42","headers":{}}]}`
+	submitted := `{"method":"GET","url":"https://x.test/42","headers":{},"body":null}`
+
+	t.Run("missing header", func(t *testing.T) {
+		cache, journal, request := authorizationFixture(t, manifest, submitted)
+		var calls atomic.Int32
+		server := httptest.NewServer((&Server{
+			Cache: cache, Journal: journal, Store: &CredentialStore{}, AuthToken: testAuthToken,
+			Transport: func(OutboundRequest, int) (OutboundResponse, error) { calls.Add(1); return OutboundResponse{}, nil },
+		}).Handler())
+		defer server.Close()
+		body, _ := json.Marshal(map[string]any{"node_version_hash": request.NodeVersionHash, "run_id": request.RunID, "step_seq": request.StepSeq, "step_id": request.StepID, "step_input_digest": request.StepInputDigest, "canonicalized_request": request.CanonicalizedRequest})
+		response, err := http.Post(server.URL+authorizationPath, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized || calls.Load() != 0 {
+			t.Fatalf("status=%d calls=%d", response.StatusCode, calls.Load())
+		}
+	})
+
+	t.Run("wrong token", func(t *testing.T) {
+		cache, journal, request := authorizationFixture(t, manifest, submitted)
+		server := httptest.NewServer((&Server{
+			Cache: cache, Journal: journal, Store: &CredentialStore{}, AuthToken: testAuthToken,
+			Transport: func(OutboundRequest, int) (OutboundResponse, error) { return OutboundResponse{}, nil },
+		}).Handler())
+		defer server.Close()
+		req := authorizedRequest(t, server.URL, request, "wrong-token")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d", response.StatusCode)
+		}
+	})
+
+	t.Run("server has no token configured", func(t *testing.T) {
+		cache, journal, request := authorizationFixture(t, manifest, submitted)
+		server := httptest.NewServer((&Server{
+			Cache: cache, Journal: journal, Store: &CredentialStore{},
+			Transport: func(OutboundRequest, int) (OutboundResponse, error) { return OutboundResponse{}, nil },
+		}).Handler())
+		defer server.Close()
+		// Even presenting an empty token must not match an unset AuthToken.
+		req := authorizedRequest(t, server.URL, request, "")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d, want 401 (fail closed with no token configured)", response.StatusCode)
+		}
+	})
+}
+
+// Regression, closed during a whole-phase audit: authorization used to be
+// fully replayable -- resubmitting an already-accepted, already-forwarded
+// request re-executed the upstream side effect indefinitely. Confirm a
+// second submission of the exact same request is denied with
+// replay_denied, and the transport is not invoked a second time.
+func TestServerDeniesReplayOfCompletedRequest(t *testing.T) {
+	manifest := `{"hosts":["x.test"],"steps":[{"id":"fetch","method":"GET","url":"https://x.test/42","headers":{}}]}`
+	submitted := `{"method":"GET","url":"https://x.test/42","headers":{},"body":null}`
+	cache, journal, request := authorizationFixture(t, manifest, submitted)
+	var calls atomic.Int32
+	server := httptest.NewServer((&Server{
+		Cache: cache, Journal: journal, Store: &CredentialStore{}, AuthToken: testAuthToken,
+		Policy: ForwardPolicy{MaxResponseBytes: 100},
+		Transport: func(OutboundRequest, int) (OutboundResponse, error) {
+			calls.Add(1)
+			return OutboundResponse{Status: http.StatusOK, Body: []byte("ok")}, nil
+		},
+	}).Handler())
+	defer server.Close()
+
+	first := postAuthorization(t, server.URL, request)
+	first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first request status = %d", first.StatusCode)
+	}
+
+	second := postAuthorization(t, server.URL, request)
+	body, _ := io.ReadAll(second.Body)
+	second.Body.Close()
+	if second.StatusCode != http.StatusForbidden || !bytes.Contains(body, []byte("replay_denied")) {
+		t.Fatalf("replay status=%d body=%s", second.StatusCode, body)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("transport called %d times, want exactly 1", calls.Load())
 	}
 }
 
@@ -60,9 +170,10 @@ func TestServerOmitsStaleContentLengthAfterRedaction(t *testing.T) {
 
 	server := httptest.NewServer((&Server{
 		Cache: cache, Journal: journal,
-		Policy:   ForwardPolicy{MaxResponseBytes: 1000},
-		Bindings: SecretBindings{"k": "ref"},
-		Store:    store,
+		Policy:    ForwardPolicy{MaxResponseBytes: 1000},
+		Bindings:  NewSecretBindings(map[string]string{"k": "ref"}),
+		Store:     store,
+		AuthToken: testAuthToken,
 		Transport: func(OutboundRequest, int) (OutboundResponse, error) {
 			original := []byte("secret is ab here") // 18 bytes, matches the stale Content-Length below
 			return OutboundResponse{
@@ -89,7 +200,7 @@ func TestServerOmitsStaleContentLengthAfterRedaction(t *testing.T) {
 func TestServerDeniesUnknownArtifactWithoutForwarding(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer((&Server{
-		Cache: NewArtifactCache(), Journal: NewMemoryRunJournal(), Store: &CredentialStore{},
+		Cache: NewArtifactCache(), Journal: NewMemoryRunJournal(), Store: &CredentialStore{}, AuthToken: testAuthToken,
 		Transport: func(OutboundRequest, int) (OutboundResponse, error) {
 			calls.Add(1)
 			return OutboundResponse{}, nil
@@ -112,10 +223,16 @@ func TestServerDeniesUnknownArtifactWithoutForwarding(t *testing.T) {
 }
 
 func TestServerRejectsMalformedJSONOverHTTP(t *testing.T) {
-	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal()}).Handler())
+	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal(), AuthToken: testAuthToken}).Handler())
 	defer server.Close()
 
-	response, err := http.Post(server.URL+authorizationPath, "application/json", bytes.NewBufferString(`{"run_id":`))
+	req, err := http.NewRequest(http.MethodPost, server.URL+authorizationPath, bytes.NewBufferString(`{"run_id":`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken)
+	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +243,7 @@ func TestServerRejectsMalformedJSONOverHTTP(t *testing.T) {
 }
 
 func TestServerRejectsWrongMethodAndMissingFieldsOverHTTP(t *testing.T) {
-	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal()}).Handler())
+	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal(), AuthToken: testAuthToken}).Handler())
 	defer server.Close()
 
 	response, err := http.Get(server.URL + authorizationPath)
@@ -138,7 +255,13 @@ func TestServerRejectsWrongMethodAndMissingFieldsOverHTTP(t *testing.T) {
 		t.Fatalf("GET status = %d", response.StatusCode)
 	}
 
-	response, err = http.Post(server.URL+authorizationPath, "application/json", bytes.NewBufferString(`{}`))
+	req, err := http.NewRequest(http.MethodPost, server.URL+authorizationPath, bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken)
+	response, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +272,16 @@ func TestServerRejectsWrongMethodAndMissingFieldsOverHTTP(t *testing.T) {
 }
 
 func postAuthorization(t *testing.T, baseURL string, request AuthorizationRequest) *http.Response {
+	t.Helper()
+	req := authorizedRequest(t, baseURL, request, testAuthToken)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func authorizedRequest(t *testing.T, baseURL string, request AuthorizationRequest, token string) *http.Request {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"node_version_hash":     request.NodeVersionHash,
@@ -161,11 +294,13 @@ func postAuthorization(t *testing.T, baseURL string, request AuthorizationReques
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := http.Post(baseURL+authorizationPath, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+authorizationPath, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return response
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
 }
 
 // Regression, found during a whole-phase audit: decodeAuthorizationRequest
@@ -174,11 +309,17 @@ func postAuthorization(t *testing.T, baseURL string, request AuthorizationReques
 // JSON decode ever fails. Confirm oversized bodies are now rejected without
 // the server reading the whole thing into memory first.
 func TestServerRejectsOversizedRequestBodyOverHTTP(t *testing.T) {
-	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal()}).Handler())
+	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal(), AuthToken: testAuthToken}).Handler())
 	defer server.Close()
 
 	oversized := bytes.NewReader(append([]byte(`{"run_id":"`), bytes.Repeat([]byte("x"), maxAuthorizationRequestBytes+1)...))
-	response, err := http.Post(server.URL+authorizationPath, "application/json", oversized)
+	req, err := http.NewRequest(http.MethodPost, server.URL+authorizationPath, oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken)
+	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

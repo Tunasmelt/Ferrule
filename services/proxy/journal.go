@@ -31,16 +31,36 @@ import (
 // step's journal entry from a different artifact, sharing only the run_id/
 // step_seq/digest. Authorize checks these two fields match the request
 // before proceeding, closing that substitution.
+// Consumed marks whether this entry has already been used to deliver one
+// complete, successful proxy response. Found missing during a whole-phase
+// audit: without this, a captured, previously-accepted authorization
+// request is a bearer capability that can be resubmitted indefinitely,
+// re-executing the upstream side effect every time and getting a fresh
+// redirect/request budget on each replay. CLAUDE.md already establishes
+// the run journal as append-only ("never add an UPDATE path to
+// run_events"), which means a legitimate retry of a step (whether after a
+// transient network failure or a retryable upstream response) is expected
+// to be journaled under a NEW step_seq by whoever orchestrates it, not by
+// resubmitting the same (run_id, step_seq) again -- so marking an entry
+// consumed after ANY response is fully delivered (regardless of HTTP
+// status; the proxy does not and should not interpret upstream status
+// codes as success/failure, that is the interpreter's routing logic) is
+// the correct proxy-level granularity, not an accidental block on retries.
 type JournalEntry struct {
 	Context         json.RawMessage
 	Digest          string
 	NodeVersionHash string
 	StepID          string
+	Consumed        bool
 }
 
 type RunJournal interface {
 	RecordInput(runID string, stepSeq int, nodeVersionHash, stepID string, input, previous json.RawMessage) (JournalEntry, error)
 	LookupInput(runID string, stepSeq int) (JournalEntry, bool)
+	// MarkConsumed records that this entry's request was fully delivered
+	// once and must never be authorized again. Returns an error if no
+	// entry exists for (runID, stepSeq).
+	MarkConsumed(runID string, stepSeq int) error
 }
 
 type journalKey struct {
@@ -91,6 +111,19 @@ func (journal *MemoryRunJournal) LookupInput(runID string, stepSeq int) (Journal
 	defer journal.mu.RUnlock()
 	entry, ok := journal.entries[journalKey{runID, stepSeq}]
 	return cloneEntry(entry), ok
+}
+
+func (journal *MemoryRunJournal) MarkConsumed(runID string, stepSeq int) error {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	key := journalKey{runID, stepSeq}
+	entry, ok := journal.entries[key]
+	if !ok {
+		return errors.New("no journal entry for run_id/step_seq")
+	}
+	entry.Consumed = true
+	journal.entries[key] = entry
+	return nil
 }
 
 func cloneEntry(entry JournalEntry) JournalEntry {
