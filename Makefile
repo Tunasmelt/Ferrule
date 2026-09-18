@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b gate-3c gate-3
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -57,5 +57,10 @@ gate-2: gate-2a gate-2b gate-2c gate-2d
 gate-3a:
 	python -m unittest tests.test_compiler_ingest tests.test_compiler_resolve tests.test_compiler_api tests.test_compiler_store -v
 
-gate-3b: gate-3a
+gate-3b:
 	python -m unittest tests.test_compiler_generate -v
+
+gate-3c:
+	python -m unittest tests.test_compiler_mocktest tests.test_compiler_claims tests.test_compiler_budget -v
+
+gate-3: gate-3a gate-3b gate-3c

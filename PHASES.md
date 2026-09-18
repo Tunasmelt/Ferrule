@@ -1270,34 +1270,98 @@ independently re-confirmed to still compile with the expected coverage
 split (20 `representable`, 3 `representable_partial`, 0 unexpected
 `not_representable`).
 
-### Milestone 3c — Mock tests, assumptions, coverage decision
+### Milestone 3c — Mock tests, assumptions, coverage decision — ✅ CLOSED 2026-09-19
 
 Deliverables
-- Mock test generation for each compiled plan
-- Assumption surfacing with source spans (`spec_claims`) for anything the
-  spec left ambiguous
-- Compile-time budget instrumentation
+- [x] Mock test generation for each compiled plan (`mocktest.py`):
+      `synthesize_input`/`golden_case` build a deterministic placeholder
+      input from a compile's `input_schema` (typed per JSON Schema type:
+      string/integer/number/boolean/array/object), and `run_mock_case`
+      executes the plan through 1c's real, unmodified interpreter
+      (`ferrule_interpreter.run`) against a plain in-process transport
+      closure — no sockets, no fixture files — asserting the interpreter
+      selected the expected route (`ok` for 2xx, `error` otherwise) and
+      mapped the expected output fields. This does not re-test the
+      interpreter's real HTTP layer (1c's own 15-plan suite already does
+      that); it tests that *this compiler's generated plans* route and map
+      correctly, a property only the compiler's own output can prove.
+- [x] Assumption surfacing with source spans, `spec_claims` per API.md
+      (`claims.py`): every GET operation carries at least one claim, since
+      none of the 8 real fixture specs document a response body content
+      schema — the generated plan's whole-body mapping is always an
+      assumption, not a documented fact. Optional query/header parameters
+      carry a second, parameter-specific claim describing `generate.py`'s
+      own "always sent, never omitted" limitation. Source spans are
+      resolved by locating **real anchor text** (the operation's own
+      method key, then the parameter's own name-declaration text) in the
+      raw document bytes via a small brace-balanced scanner — not
+      fabricated offsets — scoped to JSON documents (all 8 real fixtures +
+      the synthetic one are JSON); an unresolvable anchor falls back to an
+      empty span rather than a wrong one, documented as a known limitation
+      rather than solving general YAML span resolution.
+- [x] Compile-time budget instrumentation (`budget.py`): `timed`/
+      `median_seconds`, reusable by a later milestone's real node-artifact
+      provenance to record `compile_duration_ms` per SPEC.md's node
+      artifact shape.
 
 Test criteria
-- [ ] ≥ 80% of the 20 operations execute correctly against mock on first
-      generation attempt (no manual fixing)
-- [ ] Every generated node carries ≥ 1 assumption with a resolvable source
-      span where the spec was ambiguous (check against a spec known to have
-      ≥ 1 ambiguity, don't just check the field is non-empty)
-- [ ] Compile p50 < 3 min across the 20
+- [x] ≥ 80% of the 20 operations execute correctly against mock on first
+      generation attempt (no manual fixing) — **23/23 (100%)** of the real
+      GET operations passed on first attempt, measured for real
+      (`test_compiler_mocktest.py`), not assumed.
+- [x] Every generated node carries ≥ 1 assumption with a resolvable source
+      span where the spec was ambiguous — verified against github's
+      `issues/list-for-repo` (known-ambiguous on two counts: an
+      undocumented response shape and an optional `state` query parameter
+      the plan language can't conditionally omit), asserting ≥ 2 claims
+      and that the `state` claim's source span, decoded from the raw
+      document bytes, is exactly `"state"` — the real parameter-name
+      declaration text, not a fabricated offset. A second test confirms a
+      claim's span resolves to the *correct* operation's block specifically
+      (`getUser`'s span contains `"getUser"` and excludes
+      `"getPostComments"`, both sharing the same fixture file).
+- [x] Compile p50 < 3 min across the 20 — measured **p50 ≈ 1 ms** across
+      the 23 real operations (expected to be this low: deterministic,
+      in-process, no network or model call), comfortably under the 180s bar.
 
-Gate `make gate-3c`
+Gate `make gate-3c` — 9/9 tests pass; `make check` (93/93 Python tests),
+`mypy --strict` (`services/compiler/python/ferrule_compiler` +
+`cli/ferrule_cli`, 12 source files, clean), and `make conform` (20/20) all
+still pass with no regressions. `gate-3b`'s prerequisite chaining
+(`gate-3b: gate-3a`) was removed when adding `gate-3c`, matching Phase 2's
+established independent-target pattern (`gate-2a`..`gate-2d` don't chain)
+— `gate-3: gate-3a gate-3b gate-3c` now runs each milestone's tests
+exactly once instead of redundantly re-running earlier milestones' tests
+for every later one.
 
-### Phase 3 gate
+### Phase 3 gate — ✅ CLOSED 2026-09-19
 
 `make gate-3` = `gate-3a` + `gate-3b` + `gate-3c`.
 
-Exit when: `make gate-3` exits 0.
+Exit when: `make gate-3` exits 0. — **met.**
 
 **Decision point after phase 3:** if `representable` is below 70% across the
 sample, stop and reconsider the runtime before building further. Record the
 decision in `CHANGELOG.md`. This decision point is not a milestone gate — it
 is a judgement call the gates exist to inform, not replace.
+
+**Decision recorded, 2026-09-19**: 20/23 (87%) of this phase's compiled GET
+operations are strictly `representable`, 3/23 (13%) `representable_partial`,
+0/23 `not_representable` — comfortably clears SPEC.md §3.4's ≥70% bar
+either way it's counted. **Caveat, stated plainly rather than overclaimed**:
+this sample is GET-only by this phase's own deliberate scope decision (see
+milestone 3b) — non-GET operations are short-circuited to
+`not_representable` at the top of `compile_operation` and aren't
+represented in the 23-operation sample at all, so this number is a
+genuinely positive early signal for the URL/query/header mapping slice of
+the problem, not yet an answer to the full-scope question this decision
+point exists to inform (request bodies, write operations, and
+non-deterministic-generation cases are still unbuilt). **Continuing to
+build** on this basis: the result is strong enough on the slice tested that
+stopping to reconsider the runtime isn't warranted, but the real test of
+this decision point is whichever future milestone first compiles
+POST/PUT/PATCH operations with request bodies — revisit this number then,
+not before.
 
 ---
 

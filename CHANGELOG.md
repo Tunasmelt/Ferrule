@@ -7,6 +7,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 3c closed; Phase 3 gate closed; decision point recorded (2026-09-19)
+
+New `services/compiler/python/ferrule_compiler` modules: `mocktest.py`
+(executes a compiled plan through 1c's real, unmodified interpreter
+against an in-process canned transport, synthesizing input from the
+compile's input_schema -- no sockets, no fixture files), `claims.py`
+(surfaces `spec_claims` per API.md with source spans resolved to real
+anchor text in the raw document bytes via a small brace-balanced scanner,
+not fabricated offsets), and `budget.py` (reusable compile-time timing).
+
+Real measured numbers: 23/23 (100%) of real GET operations pass mock
+execution on first attempt (bar was 80%); compile p50 is ~1ms across 23
+operations (bar was 3 minutes, expected to clear it easily since
+generation is deterministic and in-process); every compiled operation
+carries >=1 resolvable-source-span claim, verified against a known-
+ambiguous operation (github's issues/list-for-repo) with 2 independent
+span-resolution checks.
+
+**Phase 3 gate closed.** Decision point per SPEC.md section 3.4: 20/23
+(87%) of this phase's compiled GET operations are `representable`, clearing
+the >=70% bar. Caveat recorded rather than overclaimed: the sample is
+GET-only by milestone 3b's own scope decision -- non-GET operations aren't
+represented in it at all, so this is a positive early signal for the
+URL/query/header mapping slice specifically, not yet a verdict on request
+bodies or write operations. Continuing to build; revisit this number once
+a future milestone compiles operations with request bodies.
+
 ### Milestone 3b audit: 2 findings fixed (2026-09-19)
 
 Whole-milestone audit found and fixed 2 issues by tracing how
