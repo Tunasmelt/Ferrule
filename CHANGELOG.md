@@ -7,6 +7,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Whole-phase Phase 2 audit (2026-09-19) — 2 fixed, 5 tracked
+
+Every prior 2a/2b/2c/2d audit was scoped to its own milestone's files.
+This one deliberately looked across all of `services/proxy` together.
+Claude Code independent pass, then a second, independent, read-only
+Codex pass with no visibility into the first pass's findings -- Codex
+found the most serious issue.
+
+**High — FIXED**
+- ~~`MemoryRunJournal` was keyed only by `(run_id, step_seq)`, with no
+  binding to which artifact or step a journal entry was recorded for~~ --
+  reproduced directly: a destructive step in one signed artifact was
+  fully authorized using a read-only step's journal entry from a
+  completely different artifact, sharing only `run_id`/`step_seq`/digest.
+  A real confused-deputy gap in the core request-binding guarantee.
+  Fixed: `JournalEntry` now carries `NodeVersionHash`/`StepID`, and
+  `Authorize` rejects a mismatch (`journal_step_mismatch`) before the
+  digest check. `TestAuthorizeRejectsJournalEntryFromWrongArtifactAndStep`
+  added.
+
+**Low — FIXED**
+- ~~`/v1/authorize` read its request body with an unbounded
+  `json.Decoder`~~ -- an unauthenticated client could send an
+  arbitrarily large body before decode failure. Fixed with
+  `http.MaxBytesReader` (1 MiB). `TestServerRejectsOversizedRequestBodyOverHTTP`
+  added.
+
+**Tracked, not fixed in this audit:**
+- **High**: authorization is fully replayable -- no single-use marker,
+  fresh redirect/request budget on every HTTP call. Needs Phase 5's
+  run-state-machine to do correctly (naive single-use marking would
+  break legitimate retries of transiently-failed steps).
+- **Medium**: `POST /v1/authorize` has no caller authentication. Traced
+  concretely: a network-only attacker can't forge an accepted request
+  from nothing (needs an exact `step_input_digest`, which requires
+  journal visibility), but identifiers here function as a de facto
+  bearer capability, and combined with the replay finding, one observed
+  request becomes indefinitely reusable. Safe today only under an
+  external network-isolation assumption the HTTP contract doesn't
+  represent.
+- **Medium**: `SecretBindings` is a plain unsynchronized map, unlike the
+  three other stores which all use a mutex -- a real Go data race once
+  any future credential-rebind/rotation path runs concurrently with live
+  traffic. No live trigger today; flagged for whoever adds one.
+- **Medium**: `ForwardPolicy` is process-wide and caller-supplied, never
+  derived from a signed artifact's own `runtime_limits` (SPEC.md §5) --
+  not a shape bug, just nothing reads it, because no schema in this repo
+  defines it yet.
+- **Low**: failure classification (SPEC.md §7) is incomplete across most
+  Authorize-side denials and generic transport errors; a minor status
+  inconsistency between two effectively-unreachable internal failure
+  paths (`invalid_rendered_request` vs. a `decodeOutboundRequest`
+  failure).
+
+`go vet`, `gofmt`, full `go test ./...`, `gate-2a`/`2b`/`2c`/`2d`, `make
+security`, `make check`, `make conform` all green, no regressions.
+
 ### Latency test isolated from unrelated gates (2026-09-18)
 
 `/code-review` flagged: `TestProxyLatencyP95Under50RPS` is a real

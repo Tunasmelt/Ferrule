@@ -315,7 +315,7 @@ func registerProbeManifest(cache *ArtifactCache, journal RunJournal, name string
 		return AuthorizationRequest{}, err
 	}
 	runID := "permission-probe-" + name
-	entry, err := journal.RecordInput(runID, 1, json.RawMessage(`{}`), nil)
+	entry, err := journal.RecordInput(runID, 1, hash, "fetch", json.RawMessage(`{}`), nil)
 	if err != nil {
 		return AuthorizationRequest{}, err
 	}

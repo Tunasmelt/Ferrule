@@ -167,3 +167,23 @@ func postAuthorization(t *testing.T, baseURL string, request AuthorizationReques
 	}
 	return response
 }
+
+// Regression, found during a whole-phase audit: decodeAuthorizationRequest
+// used an unbounded json.Decoder directly on the request body, letting an
+// unauthenticated network client send an arbitrarily large body before the
+// JSON decode ever fails. Confirm oversized bodies are now rejected without
+// the server reading the whole thing into memory first.
+func TestServerRejectsOversizedRequestBodyOverHTTP(t *testing.T) {
+	server := httptest.NewServer((&Server{Cache: NewArtifactCache(), Journal: NewMemoryRunJournal()}).Handler())
+	defer server.Close()
+
+	oversized := bytes.NewReader(append([]byte(`{"run_id":"`), bytes.Repeat([]byte("x"), maxAuthorizationRequestBytes+1)...))
+	response, err := http.Post(server.URL+authorizationPath, "application/json", oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 400 || response.StatusCode >= 500 {
+		t.Fatalf("status = %d, want 4xx", response.StatusCode)
+	}
+}

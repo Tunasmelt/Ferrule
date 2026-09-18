@@ -13,7 +13,7 @@ func authorizationFixture(t *testing.T, manifest, submitted string) (*ArtifactCa
 		t.Fatal(err)
 	}
 	journal := NewMemoryRunJournal()
-	entry, err := journal.RecordInput("run-1", 1, json.RawMessage(`{"id":"42"}`), nil)
+	entry, err := journal.RecordInput("run-1", 1, hash, "fetch", json.RawMessage(`{"id":"42"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

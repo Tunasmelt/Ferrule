@@ -10,6 +10,18 @@ import (
 
 const authorizationPath = "/v1/authorize"
 
+// maxAuthorizationRequestBytes bounds the /v1/authorize request body.
+// Found missing during a whole-phase audit: decodeAuthorizationRequest used
+// an unbounded json.Decoder directly on request.Body, so an unauthenticated
+// network client could send an arbitrarily large body and impose avoidable
+// memory/CPU load before the JSON decode ever fails. Matches the same
+// 1 MiB convention already used for outbound response bodies
+// (packages/interpreter/python/ferrule_interpreter/interpreter.py's
+// MAX_RESPONSE_BODY_BYTES) for a request body that should never need to be
+// large: a canonicalized_request is itself a bounded, structurally simple
+// JSON envelope.
+const maxAuthorizationRequestBytes = 1_048_576
+
 // Server exposes POST /v1/authorize. Policy, secret bindings, credential
 // storage, and transport are injected by the caller as the deliberate v1
 // scope boundary until artifact runtime limits and infrastructure exist.
@@ -35,7 +47,8 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	authorization, err := decodeAuthorizationRequest(request.Body)
+	bounded := http.MaxBytesReader(writer, request.Body, maxAuthorizationRequestBytes)
+	authorization, err := decodeAuthorizationRequest(bounded)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid authorization request"})
 		return

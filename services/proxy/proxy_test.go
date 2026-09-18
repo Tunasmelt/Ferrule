@@ -119,7 +119,7 @@ func setupAuthorization(t *testing.T) (*ArtifactCache, *MemoryRunJournal, Author
 		t.Fatal(err)
 	}
 	journal := NewMemoryRunJournal()
-	row, err := journal.RecordInput("run-1", 1, json.RawMessage(`{"id":"42"}`), nil)
+	row, err := journal.RecordInput("run-1", 1, hash, "fetch", json.RawMessage(`{"id":"42"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestAuthorizeUsesJournaledPreviousContext(t *testing.T) {
 	}
 	journal := NewMemoryRunJournal()
 	row, err := journal.RecordInput(
-		"run-1", 2,
+		"run-1", 2, hash, "list",
 		json.RawMessage(`{"account":{"id":"acct-1"}}`),
 		json.RawMessage(`{"next_cursor":"page-2-cursor-abc"}`),
 	)

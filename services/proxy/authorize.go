@@ -81,6 +81,15 @@ func Authorize(cache *ArtifactCache, journal RunJournal, request AuthorizationRe
 		return decision
 	}
 	decision.JournalFound = true
+	// The journal is keyed only by (run_id, step_seq); without this check,
+	// a journal row recorded for one artifact/step could be reused to
+	// authorize a completely different one that happens to share the same
+	// (run_id, step_seq) and digest -- reproduced directly during a
+	// whole-phase audit: a destructive step in a different artifact was
+	// fully authorized this way, using a read-only step's journal entry.
+	if entry.NodeVersionHash != request.NodeVersionHash || entry.StepID != request.StepID {
+		return deny(decision, "journal_step_mismatch", "journal entry was not recorded for this artifact and step")
+	}
 	if entry.Digest != request.StepInputDigest {
 		decision.Reason = "step input digest mismatch"
 		return decision

@@ -238,5 +238,21 @@
     "startedAt": "2026-09-17T22:40:10.308Z",
     "endedAt": "2026-09-17T22:45:55.561Z",
     "note": "codex exec succeeded"
+  },
+  "phase2-audit": {
+    "milestone": "phase2-audit",
+    "owner": "claude-code",
+    "status": "done",
+    "startedAt": "2026-09-18T20:57:30.929Z",
+    "endedAt": "2026-09-18T21:09:05.619Z",
+    "note": ""
+  },
+  "phase2-audit-codex": {
+    "milestone": "phase2-audit-codex",
+    "owner": "codex",
+    "status": "done",
+    "startedAt": "2026-09-18T20:57:31.101Z",
+    "endedAt": "2026-09-18T21:00:27.330Z",
+    "note": "codex exec succeeded"
   }
 }

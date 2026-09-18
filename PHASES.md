@@ -879,6 +879,98 @@ request a plan doesn't already describe, no credential reaching the
 worker) now has independently-verified, adversarially-tested, real-HTTP
 evidence behind it, not just unit tests against internal functions.
 
+**Whole-phase audit (2026-09-19), post-close — 1 High fixed, 1 Low fixed,
+5 tracked:** every prior 2a/2b/2c/2d audit was scoped to its own
+milestone's files. This one deliberately looked across all of
+`services/proxy` together for problems that only exist at the
+integration level. Claude Code did an independent pass, then dispatched
+Codex for a second independent read-only pass with no visibility into
+the first pass's findings; Codex found the most serious issue.
+
+- **Fixed (High):** `MemoryRunJournal` was keyed only by `(run_id,
+  step_seq)`, with no binding to which artifact or step a journal entry
+  was actually recorded for. Reproduced directly and concretely: a
+  destructive step in one signed artifact was **fully authorized** using
+  a read-only step's journal entry from a completely different artifact,
+  sharing only `run_id`/`step_seq`/digest — a real confused-deputy gap in
+  the core binding the whole proxy exists to enforce. Fixed by recording
+  `NodeVersionHash` and `StepID` on every `JournalEntry` and having
+  `Authorize` reject a mismatch (`journal_step_mismatch`) before ever
+  reaching the digest check. `TestAuthorizeRejectsJournalEntryFromWrongArtifactAndStep`
+  added (with a companion assertion that a legitimate matching request
+  still succeeds).
+- **Fixed (Low):** `decodeAuthorizationRequest` read the `/v1/authorize`
+  request body with an unbounded `json.Decoder`, so an unauthenticated
+  network client could send an arbitrarily large body before the JSON
+  decode ever failed. Fixed with `http.MaxBytesReader` (1 MiB, matching
+  the existing response-body-size convention).
+  `TestServerRejectsOversizedRequestBodyOverHTTP` added.
+- **Tracked (High):** authorization is fully replayable — a successful
+  `Authorize`+`Forward` has no single-use marker, and `Forward`'s
+  redirect/request budget is a fresh local variable on every HTTP call.
+  Anyone who captures one accepted request (most realistically: a
+  compromised worker, which already has everything needed to construct
+  one) can resubmit it indefinitely, re-executing the upstream side
+  effect and getting a fresh budget each time. Not fixed here: a correct
+  fix needs to track step-completion state across calls (SPEC.md's
+  `idempotency` field and the run-journal-based state machine belong to
+  Phase 5's durable execution, which doesn't exist yet) — naively
+  marking a journal entry "consumed" on first use would also break
+  legitimate retries of a transiently-failed step, which is explicitly
+  a required behavior (5a's failure-class routing). This needs Phase 5's
+  machinery to do correctly, not a proxy-local patch.
+- **Tracked (Medium):** `POST /v1/authorize` has no authentication of its
+  caller. Traced concretely: a network-reachable-only attacker cannot
+  forge an accepted request from nothing — they would need to already
+  know an exact `step_input_digest`, which requires already having
+  visibility into the real journal's contents — so this doesn't hand out
+  arbitrary SSRF or secret access on its own. But identifiers here
+  (artifact hashes, run IDs, digests) are being used as a de facto
+  bearer capability rather than real authentication, and combined with
+  the replay finding above, one observed accepted request becomes an
+  indefinitely reusable capability. The endpoint is only safe today under
+  an external assumption (network isolation between worker and proxy)
+  that nothing in the HTTP contract itself represents or enforces. Real
+  authentication (or authenticated workload identity) should exist
+  before this is treated as a production trust boundary.
+- **Tracked (Medium):** `SecretBindings` is a plain unsynchronized
+  `map[string]string`, unlike `ArtifactCache`/`MemoryRunJournal`/
+  `CredentialStore`, which all use a mutex. No remote mutation path
+  exists today, so this isn't currently reachable, but a future
+  credential-rebind/rotation operation running concurrently with live
+  traffic would be a real Go data race (`concurrent map read and map
+  write`, which crashes the process, not a benign inconsistency). Not
+  fixed here because doing so properly means changing `SecretBindings`
+  from a map literal into a constructed, mutex-guarded type across every
+  call site (`forward.go`, `secrets.go`, and ~8 test call sites) for a
+  risk with no live trigger yet; flagged so whoever adds a rebind/rotation
+  path does it correctly from the start.
+- **Tracked (Medium):** `ForwardPolicy` is a single process-wide value
+  the caller supplies, never derived from a signed artifact's own
+  `runtime_limits` (SPEC.md §5) — two artifacts with different signed
+  limits get the identical effective policy today. This isn't a shape
+  bug (no file was found nesting `runtime_limits` incorrectly); it's that
+  nothing reads it at all, because no schema in this codebase defines it
+  yet (SPEC.md §5's full node manifest, including `runtime_limits`, has
+  never been built as real, ingestible schema — see milestone 2c's own
+  `ForwardPolicy` scope note). Properly belongs to whichever milestone
+  formalizes the full node manifest.
+- **Tracked (Low):** failure classification (SPEC.md §7) is incomplete —
+  most Authorize-side denials (artifact/step/journal/digest failures)
+  return a bare reason with no `SecurityEvent`/failure class at all, and
+  network/transport errors surface as an unclassified generic 502.
+  Doesn't widen authority, but can produce wrong retry/routing behavior
+  once something downstream actually branches on failure class. A
+  smaller, related inconsistency: `invalid_rendered_request` (Authorize)
+  gets 403 while a similar-character internal failure discovered later
+  in `Forward` (a `decodeOutboundRequest` failure) gets a generic 502 —
+  both are effectively unreachable in practice since `RenderRequest`
+  always produces valid JSON, which is why this is Low, not Medium.
+
+Re-verified against `gate-2a`/`2b`/`2c`/`2d`, `make security`, `make
+check`, `make conform` — all green, no regressions. See `CHANGELOG.md`
+for detail.
+
 ---
 
 ## Phase 3 — Compiler, OpenAPI path

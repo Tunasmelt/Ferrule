@@ -20,13 +20,26 @@ import (
 // journal must record both, and the digest must cover both, or the proxy's
 // independent re-render silently diverges from what the worker actually
 // executed the moment a step depends on prior-step output.
+//
+// NodeVersionHash and StepID bind this entry to the specific artifact and
+// step it was journaled for. Found missing during a whole-phase audit: a
+// journal keyed by (run_id, step_seq) alone lets Authorize borrow one
+// step's journaled input to authorize a COMPLETELY DIFFERENT artifact or
+// step, as long as the caller supplies the same (run_id, step_seq) and the
+// digest that was actually stored for it -- reproduced directly, a
+// destructive step in one artifact was fully authorized using a read-only
+// step's journal entry from a different artifact, sharing only the run_id/
+// step_seq/digest. Authorize checks these two fields match the request
+// before proceeding, closing that substitution.
 type JournalEntry struct {
-	Context json.RawMessage
-	Digest  string
+	Context         json.RawMessage
+	Digest          string
+	NodeVersionHash string
+	StepID          string
 }
 
 type RunJournal interface {
-	RecordInput(runID string, stepSeq int, input, previous json.RawMessage) (JournalEntry, error)
+	RecordInput(runID string, stepSeq int, nodeVersionHash, stepID string, input, previous json.RawMessage) (JournalEntry, error)
 	LookupInput(runID string, stepSeq int) (JournalEntry, bool)
 }
 
@@ -44,7 +57,7 @@ func NewMemoryRunJournal() *MemoryRunJournal {
 	return &MemoryRunJournal{entries: make(map[journalKey]JournalEntry)}
 }
 
-func (journal *MemoryRunJournal) RecordInput(runID string, stepSeq int, input, previous json.RawMessage) (JournalEntry, error) {
+func (journal *MemoryRunJournal) RecordInput(runID string, stepSeq int, nodeVersionHash, stepID string, input, previous json.RawMessage) (JournalEntry, error) {
 	if len(previous) == 0 {
 		previous = json.RawMessage("{}")
 	}
@@ -57,7 +70,12 @@ func (journal *MemoryRunJournal) RecordInput(runID string, stepSeq int, input, p
 		return JournalEntry{}, err
 	}
 	digest := sha256.Sum256(canonical)
-	entry := JournalEntry{Context: append(json.RawMessage(nil), canonical...), Digest: "sha256:" + hex.EncodeToString(digest[:])}
+	entry := JournalEntry{
+		Context:         append(json.RawMessage(nil), canonical...),
+		Digest:          "sha256:" + hex.EncodeToString(digest[:]),
+		NodeVersionHash: nodeVersionHash,
+		StepID:          stepID,
+	}
 	key := journalKey{runID, stepSeq}
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
