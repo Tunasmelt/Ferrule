@@ -36,6 +36,7 @@ from .openapi import Operation, Parameter
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _JSON_SCHEMA_TYPES = frozenset({"string", "integer", "number", "boolean", "array", "object"})
 _SUPPORTED_LOCATIONS = frozenset({"path", "query", "header"})
+_PATH_PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 
 _OUTPUT_SCHEMA: dict[str, object] = {
     "ports": {
@@ -81,6 +82,7 @@ def compile_operation(base_url: str, operation: Operation) -> CompileResult:
     if operation.method != "GET":
         return _not_representable("non-GET operations are out of scope for milestone 3b")
 
+    seen_names: dict[str, str] = {}
     for parameter in operation.parameters:
         if parameter.location not in _SUPPORTED_LOCATIONS:
             return _not_representable(
@@ -90,10 +92,43 @@ def compile_operation(base_url: str, operation: Operation) -> CompileResult:
             return _not_representable(
                 f"parameter name {parameter.name!r} is not a valid plan template identifier"
             )
+        # Every parameter maps to one shared "input.<name>" template
+        # variable regardless of location -- two parameters with the same
+        # name in different locations (e.g. a path "id" and a query "id")
+        # would silently read from the same input port even though they
+        # may represent different values. Undetected, that's exactly the
+        # "silently wrong plan that passes static checks" this milestone's
+        # test criteria rule out.
+        if parameter.name in seen_names and seen_names[parameter.name] != parameter.location:
+            return _not_representable(
+                f"parameter name {parameter.name!r} is used in both "
+                f"{seen_names[parameter.name]!r} and {parameter.location!r}; "
+                "the plan language has only one input namespace per name"
+            )
+        seen_names[parameter.name] = parameter.location
 
     hostname = urlsplit(base_url).hostname
     if not hostname:
         return _not_representable(f"source base_url {base_url!r} has no resolvable hostname")
+
+    # Check the RAW path (single-brace OpenAPI template syntax) for any
+    # "{name}" segment with no matching declared path parameter -- an
+    # undocumented path variable or one whose declared name doesn't exactly
+    # match its placeholder text (e.g. a case difference). Left unmatched,
+    # substitution below would silently no-op and leave a literal "{name}"
+    # segment in the generated URL: the checker's template grammar only
+    # recognizes "{{ ... }}" (double braces), so a stray single-brace
+    # placeholder passes schema validation and host checks untouched while
+    # being wrong at request time. This must run before substitution --
+    # scanning the substituted string instead would also match the inner
+    # "{ input.x }" of a legitimate "{{ input.x }}" marker.
+    path_param_names = {parameter.name for parameter in operation.parameters if parameter.location == "path"}
+    referenced_names = set(_PATH_PLACEHOLDER.findall(operation.path))
+    unmatched = referenced_names - path_param_names
+    if unmatched:
+        return _not_representable(
+            f"path segment(s) {sorted(unmatched)} have no matching declared path parameter"
+        )
 
     path = operation.path
     for parameter in operation.parameters:

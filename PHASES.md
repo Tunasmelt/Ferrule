@@ -1221,6 +1221,55 @@ Gate `make gate-3b` (depends on `gate-3a`) — 25/25 tests pass (16 from 3a
 (`services/compiler/python/ferrule_compiler` + `cli/ferrule_cli`, clean),
 and `make conform` (20/20) all still pass with no regressions.
 
+**Milestone 3b audit (2026-09-19)**, run by Claude Code by tracing how
+`generate.py`'s URL construction interacts with `openapi.py`'s parameter
+parsing and the checker's double-brace-only template grammar (a
+cross-file interaction a narrow per-file review would miss), found and
+fixed 2 issues:
+- **High — FIXED**: `compile_operation` substituted only *declared*
+  `"in": "path"` parameters into the URL via literal string replacement.
+  A spec whose path contains a `{placeholder}` with no matching declared
+  parameter (a documentation error), or whose declared name doesn't
+  exactly match the placeholder text (e.g. a case difference), would
+  silently leave a literal, unsubstituted single-brace segment in the
+  generated URL — the checker's template grammar only recognizes
+  double-brace `{{ ... }}` markers, so this passed schema validation, host
+  checks, and CEL type-checking untouched: a plan reporting `representable`
+  while being wrong at request time, exactly what this milestone's test
+  criteria rule out. None of the 23 real fixture operations triggered it
+  (all correctly declared), but the generator had no defense against one
+  that doesn't. Fixed by checking the *raw* path's placeholder names
+  against declared path-parameter names *before* substitution — checking
+  the substituted string instead was tried first and was itself buggy (see
+  below) since it also matches the inner `{ input.x }` of a legitimate
+  `{{ input.x }}` marker.
+  - Caught during verification, not before: the first fix attempt scanned
+    the *substituted* URL for leftover single-brace segments, which
+    incorrectly flagged every legitimate `{{ input.x }}` marker as a stray
+    placeholder (a `{{...}}` marker contains a matching `{...}` substring)
+    and broke 3 previously-passing tests. Re-running the full 3b suite
+    immediately after applying the fix caught this before it was
+    considered done — corrected by matching against the raw pre-substitution
+    path instead, verified against all 23 real operations plus new
+    regression tests for both the undeclared and case-mismatched cases.
+- **Medium — FIXED**: `openapi.py`'s parameter merge dedupes by
+  `(name, location)`, so a `path` parameter and a `query` parameter sharing
+  the same name (e.g. both named `id`) are kept as two distinct
+  `Parameter` entries — but `generate.py` mapped every parameter to the
+  same `input.<name>` template variable regardless of location, so both
+  would silently read from one shared input port even if they represent
+  different values (and `_input_schema`'s dict comprehension would let one
+  silently overwrite the other's declared type). Not triggered by any of
+  the 23 real fixture operations. Fixed by rejecting a cross-location name
+  collision as `not_representable`; covered by a new regression test.
+
+Full 3b suite re-verified after both fixes: 28/28 `gate-3b` tests (16 from
+3a + 12 from `test_compiler_generate`, up from 9), 84/84 full Python suite,
+`mypy --strict` clean, `make conform` 20/20, and all 23 real GET operations
+independently re-confirmed to still compile with the expected coverage
+split (20 `representable`, 3 `representable_partial`, 0 unexpected
+`not_representable`).
+
 ### Milestone 3c — Mock tests, assumptions, coverage decision
 
 Deliverables

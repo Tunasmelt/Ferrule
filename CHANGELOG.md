@@ -7,6 +7,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 3b audit: 2 findings fixed (2026-09-19)
+
+Whole-milestone audit found and fixed 2 issues by tracing how
+`generate.py`'s URL construction interacts with `openapi.py`'s parameter
+parsing and the checker's double-brace-only template grammar:
+- An undeclared or case-mismatched path placeholder (e.g. spec path
+  `/widgets/{ID}` with declared parameter `id`) would silently leave a
+  literal, unsubstituted segment in the generated URL -- passing all
+  static checks while being wrong at request time. Fixed by validating the
+  raw path's placeholders against declared parameter names before
+  substitution. (First fix attempt scanned the substituted string instead
+  and incorrectly flagged legitimate `{{ input.x }}` markers as stray
+  placeholders, breaking 3 tests -- caught immediately by re-running the
+  suite, corrected before considering the fix done.)
+- A path parameter and a query parameter sharing the same name would
+  silently collapse onto one shared `input.<name>` variable. Fixed by
+  rejecting cross-location name collisions as `not_representable`.
+
+Neither was triggered by the 23 real fixture operations; both are now
+covered by regression tests. 28/28 gate-3b tests pass (up from 25), 84/84
+full suite, mypy --strict clean, make conform unaffected.
+
 ### Milestone 3b closed: deterministic schema and plan generation (2026-09-19)
 
 Scope decision made with the user before writing code: plan generation is

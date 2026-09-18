@@ -6,7 +6,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "services" / "compiler" / "python"))
 
 from ferrule_compiler.generate import compile_operation  # noqa: E402
-from ferrule_compiler.openapi import ingest  # noqa: E402
+from ferrule_compiler.openapi import Operation, Parameter, ingest  # noqa: E402
 from ferrule_plan_schema import check as check_plan  # noqa: E402
 
 REAL_FIXTURES = {
@@ -109,6 +109,57 @@ class CompilerGenerateTests(unittest.TestCase):
         operation = next(item for item in spec.operations if item.operation_id == "getPost")
         result = compile_operation("not-a-url", operation)
         self.assertEqual("not_representable", result.coverage)
+
+    def test_undeclared_path_placeholder_is_not_representable(self) -> None:
+        # A documentation error: "/widgets/{id}" has no declared "id" path
+        # parameter. Silently leaving the literal "{id}" in the URL would
+        # pass every static check while being wrong at request time.
+        operation = Operation(
+            operation_id="getWidget",
+            method="GET",
+            path="/widgets/{id}",
+            summary="",
+            description="",
+            tags=(),
+            parameters=(),
+        )
+        result = compile_operation("https://example.com", operation)
+        self.assertEqual("not_representable", result.coverage)
+        self.assertIn("id", result.reasons[0])
+
+    def test_case_mismatched_path_parameter_is_not_representable(self) -> None:
+        # The declared parameter name doesn't exactly match the path's
+        # placeholder text -- same failure mode as the undeclared case.
+        operation = Operation(
+            operation_id="getWidget",
+            method="GET",
+            path="/widgets/{ID}",
+            summary="",
+            description="",
+            tags=(),
+            parameters=(Parameter(name="id", location="path", required=True, schema_type="string"),),
+        )
+        result = compile_operation("https://example.com", operation)
+        self.assertEqual("not_representable", result.coverage)
+
+    def test_cross_location_name_collision_is_not_representable(self) -> None:
+        # A path parameter and a query parameter sharing the same name would
+        # otherwise silently collapse onto one shared input.<name> variable.
+        operation = Operation(
+            operation_id="getWidget",
+            method="GET",
+            path="/widgets/{id}",
+            summary="",
+            description="",
+            tags=(),
+            parameters=(
+                Parameter(name="id", location="path", required=True, schema_type="string"),
+                Parameter(name="id", location="query", required=False, schema_type="string"),
+            ),
+        )
+        result = compile_operation("https://example.com", operation)
+        self.assertEqual("not_representable", result.coverage)
+        self.assertIn("id", result.reasons[0])
 
 
 if __name__ == "__main__":
