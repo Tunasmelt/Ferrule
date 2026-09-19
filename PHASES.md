@@ -1418,20 +1418,105 @@ clean across 12 source files; `make conform` 20/20.
 
 **Goal:** a reviewer can approve quickly and correctly.
 
-### Milestone 4a — Sandbox execution and permission probe as a gate
+### Milestone 4a — Sandbox execution and permission probe as a gate — ✅ CLOSED 2026-09-19
+
+**Scope decision, made with the user before writing any code**: "real
+credentials" was narrowed to no-auth-only. The user was asked whether to
+supply a real credential (e.g. a GitHub PAT) to exercise the proxy's actual
+secret-injection path against a live API, or to scope this milestone to
+public APIs needing no credential at all; they chose the latter. All 5
+nodes hit genuinely real, public, unauthenticated APIs (PokeAPI,
+JSONPlaceholder, Open-Meteo) over the real internet — "real" refers to
+hitting the genuine live APIs, not synthetic ones; "against real sandbox
+accounts" is satisfied vacuously (no account needed) for this milestone.
+Proving the credential-injection path specifically against a *live* API
+(as opposed to Phase 2's mocked/local-upstream proof, which already
+exists) remains open for whenever a real credential is available.
 
 Deliverables
-- Sandbox execution against real credentials (5 nodes)
-- Permission probe suite from milestone 2d wired in as a **blocking**
-  verification stage — reuse it, do not reimplement it
+- [x] Sandbox execution against 5 real phase-3 nodes (`services/proxy/sandbox_test.go`),
+      driven entirely through the real HTTP `POST /v1/authorize` endpoint
+      (matching `probe.go`'s own documented testing discipline — "drives
+      the running proxy exclusively through its HTTP authorization
+      endpoint") with the real `NewHTTPTransport`, not a mock. Each node:
+      signs a bare `{"hosts": [...], "steps": [...]}` plan document with a
+      freshly generated Ed25519 dev keypair, pushes it into a real
+      `ArtifactCache`, renders the exact submitted request via the same
+      `RenderRequest` the proxy independently re-derives from (so there is
+      no risk of a hand-written request drifting from what the proxy
+      expects), records a journal entry, and POSTs to the running proxy.
+      No full SPEC.md §5 manifest needed — confirmed while planning this
+      milestone that `authorize.go`'s `findStep`/`planDocument` already
+      treat a bare plan document (no `"plan"` wrapper key) as the manifest
+      itself, exactly the shape Phase 3's `compile_operation` already
+      produces.
+- [x] Permission probe suite from milestone 2d wired in as a **blocking**
+      pre-condition, reused not reimplemented: `RunPermissionProbes` runs
+      first against the same running proxy instance (same
+      Cache/Journal/Store/Bindings/Policy/AuthToken the 5 real nodes then
+      use); the test fails immediately, before attempting any of the 5
+      nodes, if any of the 12 existing probe cases doesn't pass.
+- [x] One deliberately malicious "node F" (a local adversarial `httptest`
+      upstream returning a cross-host redirect to a second, distinct local
+      server) run through the exact same `verifySandboxNode` code path
+      used for the 5 real nodes — not a separate/divergent check — proving
+      the *verification stage itself*, not just the underlying proxy
+      mechanism 2d's probes already cover generically, correctly refuses a
+      misbehaving node. Asserts both that it fails verification and that
+      the malicious second server is never actually fetched (a call
+      counter, same technique as `probe.go`'s own redirect probe).
+- [x] `FERRULE_SANDBOX_LIVE=1`-gated (skips, not fails, when unset),
+      following milestone 2d's own established precedent
+      (`FERRULE_LATENCY_BENCHMARK=1`) for keeping a real-network/real-timing
+      test out of `go test ./...`/`make check`/every other gate by default.
 
 Test criteria
-- [ ] Sandbox verification passes for 5 phase-3 nodes against real sandbox
-      accounts
-- [ ] A node that follows a cross-host redirect (deliberately constructed
-      test case) cannot pass this stage and therefore cannot be approved
+- [x] Sandbox verification passes for 5 phase-3 nodes against real sandbox
+      accounts — all 5 pass against the genuine live APIs: PokeAPI
+      `getPokemonById`/`listPokemon`, JSONPlaceholder `getUser`, Open-Meteo
+      `getForecast`/`getElevation`.
+      **Caught a real, previously-undetected bug while doing this for
+      real**: `open-meteo.json`'s original 5th candidate node,
+      `searchGeocoding`, returned a genuine live `404` — the fixture's path
+      (`api.open-meteo.com/v1/geocoding`) was factually wrong from
+      milestone 3a; the real Geocoding API lives on a different host
+      (`geocoding-api.open-meteo.com/v1/search`) entirely. Every prior test
+      of this operation (3a's ingest, 3b's static-checker/mock-execution
+      suite, 3c's mock/claims/budget suites) used a mock transport and
+      never exercised the real endpoint, so this went undetected through 3
+      milestones — exactly the class of bug "sandbox execution against
+      real APIs" exists to catch. Fixed the fixture (documented the
+      correct host via a per-path `servers` override and an explanatory
+      note — even though this compiler's ingest doesn't parse per-path
+      servers overrides today, so a real Source registered against this
+      spec would still need this called out separately) and swapped the
+      sandbox test's 5th node to `getElevation`, confirmed correctly
+      hosted under `api.open-meteo.com`.
+- [x] A node that follows a cross-host redirect (deliberately constructed
+      test case) cannot pass this stage and therefore cannot be approved —
+      node F above; the malicious redirect target received zero requests.
 
-Gate `make gate-4a`
+Gate `make gate-4a` — exits 0, run twice as intended (once unset,
+confirming a clean `--- SKIP`; once with `FERRULE_SANDBOX_LIVE=1`, making
+genuine live calls). `go test ./services/proxy/...` (full suite, live test
+skipped) and `go build ./...` both clean; `make check` (96/96 Python tests
++ all Go tests) and `make conform` (20/20) both still pass with no
+regressions.
+
+Built by Codex via `codex-task.mjs` (pure Go work, no credentials
+involved). Codex's own sandboxed execution environment could not reach the
+real internet at all ("dial tcp ... forbidden by its access permissions"),
+so it could only prove the code compiles and the probe/skip-gating logic
+works — it correctly said so explicitly rather than papering over the
+limitation. Claude Code independently re-ran `make gate-4a` with real
+network access immediately after, which is what actually caught the
+Open-Meteo fixture bug above; Codex's diff was otherwise correct as
+written, including one legitimate fix of its own to
+`probe.go`/`sendProbeRequest` (disabling JSON's default HTML-escaping of
+`&` in the request encoder, needed because `authorize.go` compares
+rendered vs. submitted requests as raw bytes, not parsed JSON — a real
+`&` in `listPokemon`'s query string would otherwise mismatch against the
+proxy's own un-escaped re-derivation and fail with `request_mismatch`).
 
 ### Milestone 4b — Evidence bundle
 

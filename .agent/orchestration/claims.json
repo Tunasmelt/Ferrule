@@ -270,5 +270,13 @@
     "startedAt": "2026-09-18T21:51:25.441Z",
     "endedAt": "2026-09-18T21:56:49.235Z",
     "note": "exit 1"
+  },
+  "4a": {
+    "milestone": "4a",
+    "owner": "claude-code",
+    "status": "done",
+    "startedAt": "2026-09-19T08:39:09.302Z",
+    "endedAt": "2026-09-19T08:46:44.251Z",
+    "note": "codex exec succeeded"
   }
 }

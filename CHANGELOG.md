@@ -7,6 +7,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 4a closed: sandbox execution against real APIs (2026-09-19)
+
+Phase 4 begins. Scope decision made with the user first: "sandbox
+execution against real credentials" was narrowed to no-auth-only public
+APIs (PokeAPI, JSONPlaceholder, Open-Meteo) rather than a real GitHub/
+Stripe-style credential, since the user chose not to hand over a token for
+this milestone. Proving the proxy's credential-injection path against a
+live (not mocked) API remains open for later.
+
+New services/proxy/sandbox_test.go drives 5 real phase-3-shaped nodes
+through the real POST /v1/authorize endpoint with the real HTTP transport
+-- genuine live internet calls, no mocking. Milestone 2d's permission
+probe suite runs first as a blocking pre-condition (reused, not
+reimplemented), and one deliberately malicious cross-host-redirect node
+runs through the identical verification code path as the 5 real ones,
+proving the verification *stage* itself rejects it. FERRULE_SANDBOX_LIVE=1
+-gated, following 2d's own established pattern for live/timing tests, so
+it never runs under `make check` by default.
+
+Doing this for real, not mocked, caught a genuine bug immediately:
+open-meteo.json's searchGeocoding operation had a factually wrong host
+baked into it since milestone 3a (api.open-meteo.com/v1/geocoding 404s for
+real; the actual API lives on geocoding-api.open-meteo.com/v1/search).
+Every prior test of this operation across milestones 3a-3c used a mock
+transport and never caught it. Fixed the fixture and swapped the sandbox
+test's 5th node to getElevation (confirmed correctly hosted). This is
+exactly the failure mode "sandbox execution against real APIs" exists to
+catch, on its first real run.
+
+Built by Codex (pure Go, no credentials); Codex's own sandbox had no
+outbound network access and said so explicitly rather than papering over
+it. Claude Code independently re-ran the live gate with real network
+access, which is what surfaced the Open-Meteo bug. gate-4a exits 0 (5/5
+real nodes pass, malicious node correctly rejected); make check (96/96)
+and make conform (20/20) unaffected. See PHASES.md milestone 4a for full
+detail.
+
 ### Whole-Phase-3 audit: 3 findings fixed (2026-09-19)
 
 Audited by actually driving the full pipeline (ingest -> resolve ->

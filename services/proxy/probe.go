@@ -350,7 +350,10 @@ func registerProbeManifest(cache *ArtifactCache, journal RunJournal, name string
 }
 
 func sendProbeRequest(baseURL, authToken string, authorization AuthorizationRequest) (*http.Response, []byte, error) {
-	payload, err := json.Marshal(authorizationWireRequest{
+	var payload bytes.Buffer
+	encoder := json.NewEncoder(&payload)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(authorizationWireRequest{
 		NodeVersionHash: authorization.NodeVersionHash, RunID: authorization.RunID,
 		StepSeq: authorization.StepSeq, StepID: authorization.StepID,
 		StepInputDigest: authorization.StepInputDigest, CanonicalizedRequest: authorization.CanonicalizedRequest,
@@ -358,7 +361,7 @@ func sendProbeRequest(baseURL, authToken string, authorization AuthorizationRequ
 	if err != nil {
 		return nil, nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+authorizationPath, bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+authorizationPath, &payload)
 	if err != nil {
 		return nil, nil, err
 	}

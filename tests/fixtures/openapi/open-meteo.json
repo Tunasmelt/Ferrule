@@ -16,11 +16,12 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/geocoding": {
+    "/v1/search": {
+      "servers": [{ "url": "https://geocoding-api.open-meteo.com" }],
       "get": {
         "operationId": "searchGeocoding",
         "summary": "Search for a location by name",
-        "description": "Geocoding API to convert a place name into geographic coordinates.",
+        "description": "Geocoding API to convert a place name into geographic coordinates. Lives on a different host (geocoding-api.open-meteo.com, per this path's own \"servers\" override) than this spec's top-level default (api.open-meteo.com) -- confirmed against the real, live API during milestone 4a's sandbox execution, which caught this fixture's original path/host as factually wrong (previously /v1/geocoding on the top-level host, which 404s for real; mocked testing throughout milestones 3a-3c never exercised the real endpoint so never caught it). Note: this compiler's ingest does not currently parse per-path \"servers\" overrides -- a Source registered against this spec's top-level base_url would still compile this operation incorrectly. Documented here for accuracy; not exercised as a sandbox node for that reason.",
         "tags": ["geocoding"],
         "parameters": [
           { "name": "name", "in": "query", "required": true, "schema": { "type": "string" } }
