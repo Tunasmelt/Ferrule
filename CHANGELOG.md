@@ -7,6 +7,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Whole-Phase-3 audit: 3 findings fixed (2026-09-19)
+
+Audited by actually driving the full pipeline (ingest -> resolve ->
+generate -> mock-verify -> claims) through the real HTTP API end-to-end,
+since no prior test had: every 3a test stayed at the HTTP/store layer,
+every 3b/3c test loaded fixtures from disk directly and called internal
+functions, bypassing the API layer entirely. The three milestones had
+never been proven to compose.
+
+They didn't, cleanly. Fixed 3 issues, each reproduced directly before
+fixing, not just reasoned about:
+- No adapter existed between the API's JSON operation shape and the
+  internal Operation/Parameter dataclasses generate.py/claims.py require.
+  `Operation(**response_json)` looks like it works (dataclasses don't
+  validate field types) but crashes with a confusing AttributeError deep
+  inside compile_operation. Fixed with openapi.operation_from_mapping.
+- Source.base_url (required by every compile) was never retrievable
+  through the API -- not even echoed back on creation. Fixed: SourceResponse
+  now includes it, plus a new GET /sources/{id}.
+- Uploaded document bytes (required by claims.extract_claims) couldn't be
+  retrieved after upload. Fixed: new GET /sources/{id}/documents/{id},
+  with a same-source ownership check.
+
+New tests/test_compiler_pipeline.py proves the full pipeline composes
+through the real API using only data a real caller could retrieve, and
+that the result is byte-identical to compiling directly from ingest() --
+the API boundary is provably lossless. gate-3 exits 0 (40 tests); 96/96
+full suite; mypy --strict clean; make conform unaffected. See PHASES.md's
+Phase 3 gate section for full detail.
+
 ### Milestone 3c closed; Phase 3 gate closed; decision point recorded (2026-09-19)
 
 New `services/compiler/python/ferrule_compiler` modules: `mocktest.py`

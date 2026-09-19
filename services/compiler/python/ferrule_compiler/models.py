@@ -17,6 +17,9 @@ class SourceCreate(StrictModel):
 
 class SourceResponse(StrictModel):
     id: str
+    name: str
+    base_url: str
+    auth_kind: Literal["api_key", "bearer"]
     spec_status: Literal["none"] = "none"
 
 

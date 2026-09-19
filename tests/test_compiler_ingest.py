@@ -5,10 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "services" / "compiler" / "python"))
 
+from dataclasses import asdict  # noqa: E402
+
 from ferrule_compiler.openapi import (  # noqa: E402
     InvalidDocumentError,
     InvalidOpenAPIError,
     ingest,
+    operation_from_mapping,
 )
 
 
@@ -92,6 +95,18 @@ paths:
         self.assertEqual(len(ids), len(set(ids)))
         self.assertIn("get-foo-bar", ids)
         self.assertIn("get-foo-bar-2", ids)
+
+    def test_operation_from_mapping_round_trips_through_json(self) -> None:
+        # Simulates exactly what a caller of the compiler's HTTP API gets
+        # back: operation_id/method/... plus a list of plain parameter
+        # dicts, not Parameter instances -- operation_from_mapping must
+        # reconstruct a real Operation from that, not merely something that
+        # looks like one.
+        raw = (self.fixtures / "github.json").read_bytes()
+        original = next(item for item in ingest(raw).operations if item.operation_id == "repos/get")
+        json_shape = asdict(original)  # what OperationResponse(**asdict(operation)).model_dump() produces
+        rebuilt = operation_from_mapping(json_shape)
+        self.assertEqual(original, rebuilt)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .models import (
     DocumentResponse,
@@ -45,6 +45,10 @@ class APIError(Exception):
 
 def _operation_model(operation: Operation) -> OperationResponse:
     return OperationResponse(**asdict(operation))
+
+
+def _source_model(source: Source) -> SourceResponse:
+    return SourceResponse(id=source.id, name=source.name, base_url=source.base_url, auth_kind=source.auth_kind)
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -86,7 +90,11 @@ def create_app() -> FastAPI:
     def create_source(body: SourceCreate) -> SourceResponse:
         source = Source(new_id("src"), body.name, body.base_url, body.auth_kind)
         store.put_source(source)
-        return SourceResponse(id=source.id)
+        return _source_model(source)
+
+    @app.get("/sources/{source_id}", response_model=SourceResponse)
+    def get_source(source_id: str) -> SourceResponse:
+        return _source_model(require_source(source_id))
 
     @app.post("/sources/{source_id}/documents", status_code=201, response_model=DocumentResponse)
     async def upload_document(
@@ -102,6 +110,18 @@ def create_app() -> FastAPI:
         document = Document(new_id("doc"), source_id, kind, raw, digest)
         store.put_document(document)
         return DocumentResponse(id=document.id, sha256=digest, kind=kind)
+
+    @app.get("/sources/{source_id}/documents/{document_id}")
+    def get_document_bytes(source_id: str, document_id: str) -> Response:
+        # Raw bytes, not a JSON envelope: this is the same content originally
+        # uploaded, needed by callers (e.g. claims.extract_claims) that must
+        # resolve a source span back into the raw document -- otherwise the
+        # only artifact of an upload a caller can ever get back is its digest.
+        require_source(source_id)
+        document = store.get_document(document_id)
+        if document is None or document.source_id != source_id:
+            raise APIError(404, "document_not_found", f"document {document_id} was not found")
+        return Response(content=document.raw, media_type="application/octet-stream")
 
     @app.post("/sources/{source_id}/extract", status_code=202, response_model=ExtractJobResponse)
     def extract_source(source_id: str) -> ExtractJobResponse:

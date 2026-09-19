@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import Mapping, cast
 
 import yaml  # type: ignore[import-untyped]
 
@@ -48,6 +49,40 @@ class IngestedSpec:
     source_hash: str
     openapi_version: str
     operations: tuple[Operation, ...]
+
+
+def parameter_from_mapping(data: Mapping[str, object]) -> Parameter:
+    return Parameter(
+        name=str(data["name"]),
+        location=str(data["location"]),
+        required=bool(data["required"]),
+        schema_type=str(data["schema_type"]),
+    )
+
+
+def operation_from_mapping(data: Mapping[str, object]) -> Operation:
+    """Reconstruct an Operation from its API wire shape (OperationResponse's JSON).
+
+    `Operation(**data)` looks like it works -- frozen dataclasses don't
+    validate or convert field types -- but silently produces an Operation
+    whose `parameters` are plain dicts and whose `tags` is a list, not the
+    Parameter/tuple instances generate.py and claims.py actually require.
+    That fails later with a confusing `AttributeError` deep inside
+    compile_operation, far from the real mistake. Use this whenever
+    reconstructing an Operation from JSON (an API response, a stored
+    record, etc.) instead.
+    """
+    raw_parameters = cast(list[Mapping[str, object]], data.get("parameters", []))
+    raw_tags = cast(list[object], data.get("tags", []))
+    return Operation(
+        operation_id=str(data["operation_id"]),
+        method=str(data["method"]),
+        path=str(data["path"]),
+        summary=str(data.get("summary", "")),
+        description=str(data.get("description", "")),
+        tags=tuple(str(tag) for tag in raw_tags),
+        parameters=tuple(parameter_from_mapping(item) for item in raw_parameters),
+    )
 
 
 def _load(raw: bytes) -> object:

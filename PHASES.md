@@ -1363,7 +1363,56 @@ this decision point is whichever future milestone first compiles
 POST/PUT/PATCH operations with request bodies — revisit this number then,
 not before.
 
----
+**Whole-Phase-3 audit (2026-09-19)**, run by Claude Code by actually
+driving the full pipeline (ingest → resolve → generate → mock-verify →
+claims) through the real HTTP API end-to-end, rather than re-reading each
+milestone's own tests again — every prior 3a/3b/3c test stayed on one side
+of the API boundary or the other (3a's tests never call `generate.py`/
+`claims.py`; 3b/3c's tests load fixtures from disk directly and never go
+through the API), so nothing had ever proven the three milestones actually
+compose. They didn't, cleanly. Found and fixed 3 issues, all confirmed by
+actually reproducing them, not just reasoning about them:
+- **High — FIXED**: no adapter existed between the API's JSON operation
+  shape (`OperationResponse`) and the internal `Operation`/`Parameter`
+  dataclasses `generate.py`/`claims.py` require. A caller naturally
+  attempting `Operation(**response_json)` gets an object that looks
+  correct — frozen dataclasses don't validate or convert field types — but
+  crashes with a confusing `AttributeError: 'dict' object has no attribute
+  'location'` deep inside `compile_operation`, far from the real mistake.
+  Reproduced directly before fixing. Fixed by adding
+  `openapi.operation_from_mapping`/`parameter_from_mapping`, with a round-
+  trip test proving `ingest → asdict → operation_from_mapping` reconstructs
+  an identical `Operation`.
+- **Medium — FIXED**: `Source.base_url` — required by every
+  `compile_operation` call — was never retrievable through the API:
+  `SourceResponse` didn't echo it back even on creation (only `id` and a
+  static `spec_status`), and there was no `GET /sources/{id}` at all.
+  Fixed: `SourceResponse` now includes `name`/`base_url`/`auth_kind`, and a
+  new `GET /sources/{source_id}` returns them. Tightened `Store.Source
+  .auth_kind` from `str` to the same `Literal["api_key","bearer"]` `mypy
+  --strict` flagged when wiring this through, closing a latent type-safety
+  gap in the store model itself.
+- **Medium — FIXED**: uploaded document bytes — required by
+  `claims.extract_claims` for source-span resolution — could never be
+  retrieved after upload (only the sha256 digest came back). Fixed: new
+  `GET /sources/{source_id}/documents/{document_id}` returns the raw
+  bytes, with a same-source ownership check (a document belonging to a
+  different source 404s rather than being retrievable cross-source) and a
+  regression test for that check specifically.
+
+Added `tests/test_compiler_pipeline.py`: drives the full pipeline through
+the real API using only data a real caller could retrieve (the fetched
+source's `base_url`, the fetched document's raw bytes, `operation_from_mapping`
+on the resolved operation's JSON), then proves the result is byte-identical
+to compiling directly from `ingest()` with no API round-trip — the
+API boundary is provably lossless, not just assumed to be. Runs once under
+`gate-3` (spans 3a/3b/3c, belongs to no single milestone gate) rather than
+being duplicated into an existing milestone gate.
+
+Re-verified after all fixes: `gate-3` exits 0 (40 tests: 17 `gate-3a`
+[16 + 1 new adapter round-trip test] + 12 `gate-3b` + 9 `gate-3c` + 2 new
+`test_compiler_pipeline` tests); 96/96 full Python suite; `mypy --strict`
+clean across 12 source files; `make conform` 20/20.
 
 ## Phase 4 — Verification and evidence bundle
 

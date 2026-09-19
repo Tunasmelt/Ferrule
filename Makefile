@@ -63,4 +63,9 @@ gate-3b:
 gate-3c:
 	python -m unittest tests.test_compiler_mocktest tests.test_compiler_claims tests.test_compiler_budget -v
 
+# test_compiler_pipeline spans 3a/3b/3c (ingest -> resolve -> generate ->
+# mock-verify -> claims through the real HTTP API) so it belongs to no
+# single milestone gate; it runs once here instead of being duplicated
+# into gate-3a/3b/3c.
 gate-3: gate-3a gate-3b gate-3c
+	python -m unittest tests.test_compiler_pipeline -v

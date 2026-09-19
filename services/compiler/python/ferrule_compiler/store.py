@@ -28,7 +28,7 @@ class Source:
     id: str
     name: str
     base_url: str
-    auth_kind: str
+    auth_kind: Literal["api_key", "bearer"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +83,10 @@ class Store:
     def documents_for(self, source_id: str) -> list[Document]:
         with self._lock:
             return deepcopy([item for item in self._documents.values() if item.source_id == source_id])
+
+    def get_document(self, document_id: str) -> Document | None:
+        with self._lock:
+            return deepcopy(self._documents.get(document_id))
 
     def put_spec(self, spec: ExtractedSpec) -> None:
         with self._lock:
