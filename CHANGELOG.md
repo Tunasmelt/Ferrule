@@ -7,6 +7,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 4a audit: stale test-cache finding fixed (2026-09-19)
+
+Found by re-running gate-4a twice rather than trusting one green run:
+`go test` was caching the live sandbox test's result, so a second
+`make gate-4a` run with no source changes silently replayed a stale PASS
+with **zero live network traffic** -- confirmed directly (instant
+`(cached)`, no real requests). This would have defeated milestone 4a's
+entire purpose (catching real-world drift, exactly as it already did once
+for the Open-Meteo bug) on every run after the first. Fixed with
+`-count=1` on both gate-4a invocations.
+
+While diagnosing, checked whether milestone 2d's FERRULE_LATENCY_BENCHMARK
+precedent -- the pattern 4a copied -- had the same gap. It did, unnoticed
+since 2d closed: a repeat `make gate-2d` would equally have replayed a
+stale cached p95 instead of re-measuring. Fixed there too. Both gates
+re-verified to genuinely re-execute on repeat runs now.
+
+Also reviewed and confirmed correct: Codex's own probe.go fix (disabling
+JSON's default HTML-escaping of `&` in the shared probe request encoder,
+since the proxy's own canonical renderer never escapes it) is real, well
+-scoped, and hadn't caused any prior failures only because no existing
+probe fixture used such a character.
+
 ### Milestone 4a closed: sandbox execution against real APIs (2026-09-19)
 
 Phase 4 begins. Scope decision made with the user first: "sandbox

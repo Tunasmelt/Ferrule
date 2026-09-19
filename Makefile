@@ -47,7 +47,13 @@ gate-2c:
 	go test ./services/proxy/...
 
 gate-2d:
-	FERRULE_LATENCY_BENCHMARK=1 go test ./services/proxy/... -run 'PermissionProbes|ProxyLatency' -v
+	# -count=1 disables go test's build cache: without it, a second gate-2d
+	# run with no source changes silently replays a stale cached result
+	# instead of re-measuring real wall-clock latency, defeating the point
+	# of a live timing benchmark. Found during milestone 4a's audit (same
+	# gap, same root cause, in gate-4a's live network test) and fixed here
+	# too rather than left in place now that it's diagnosed.
+	FERRULE_LATENCY_BENCHMARK=1 go test ./services/proxy/... -run 'PermissionProbes|ProxyLatency' -count=1 -v
 
 # PHASES.md's phase-level gate: the union of that phase's milestone gates,
 # plus make security (also required, but tracked as its own invocation per
@@ -71,7 +77,15 @@ gate-3: gate-3a gate-3b gate-3c
 	python -m unittest tests.test_compiler_pipeline -v
 
 gate-4a:
-	go test ./services/proxy/... -run '^TestSandbox' -v
-	FERRULE_SANDBOX_LIVE=1 go test ./services/proxy/... -run '^TestSandbox' -v
+	# -count=1 disables go test's build cache on both invocations. Without
+	# it, a second run with no source changes silently replays a stale
+	# cached result instead of actually skipping / actually calling the
+	# real APIs again -- confirmed directly during the 4a audit: repeating
+	# the live invocation returned an instant "(cached)" pass with zero
+	# live traffic, which would silently defeat this test's entire purpose
+	# (catching real-world drift, as it already did once for Open-Meteo)
+	# on every run after the first.
+	go test ./services/proxy/... -run '^TestSandbox' -count=1 -v
+	FERRULE_SANDBOX_LIVE=1 go test ./services/proxy/... -run '^TestSandbox' -count=1 -v
 
 gate-4: gate-4a

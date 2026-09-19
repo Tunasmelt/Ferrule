@@ -1518,6 +1518,42 @@ rendered vs. submitted requests as raw bytes, not parsed JSON — a real
 `&` in `listPokemon`'s query string would otherwise mismatch against the
 proxy's own un-escaped re-derivation and fail with `request_mismatch`).
 
+**Milestone 4a audit (2026-09-19)**, run by Claude Code, found and fixed 1
+issue — caught by actually re-running the gate twice rather than trusting
+one green run, which is exactly what surfaced it:
+- **High — FIXED**: `gate-4a`'s two `go test` invocations had no
+  `-count=1`, so Go's test result cache silently replayed a stale result
+  on any repeat run with no source changes — confirmed directly: running
+  the live (`FERRULE_SANDBOX_LIVE=1`) invocation twice in a row returned
+  an instant `ok ... (cached)` the second time, with **zero live network
+  traffic actually occurring**. This would have defeated the entire point
+  of milestone 4a — catching real-world drift, exactly as it already did
+  once for the Open-Meteo bug above — on every `make gate-4a` run after
+  the very first, silently reporting stale-but-passing results even if an
+  upstream API were currently down or had changed again. Fixed by adding
+  `-count=1` to both `gate-4a` invocations (forces fresh execution,
+  verified directly: two consecutive runs now both show real elapsed time
+  and real response bodies, never `(cached)`). While diagnosing this,
+  checked whether milestone 2d's `FERRULE_LATENCY_BENCHMARK=1` precedent —
+  the pattern 4a's gating was explicitly modeled on — had the same latent
+  gap. It did (unnoticed since 2d closed): a repeat `make gate-2d` would
+  equally have replayed a stale cached p95 measurement instead of
+  re-measuring real wall-clock latency. Fixed there too rather than left
+  in place now that it's diagnosed; re-verified `gate-2d` still passes and
+  now genuinely re-measures (confirmed a fresh `p95=704.7µs` reading on
+  re-run, not a repeated cached number).
+
+Also reviewed and confirmed correct (no further action): the
+`sendProbeRequest`/`writePythonString` HTML-escaping asymmetry Codex's own
+diff fixed is real and correctly scoped — `render.go`'s hand-written
+canonical encoder never HTML-escapes `&`/`<`/`>`, so the old
+`json.Marshal`-based probe request encoder (which does, by Go's default)
+was latently mismatched against it the whole time; no *existing* probe
+fixture happened to contain such a character, so this had caused no
+prior failures, but would have spuriously broken any future probe or
+sandbox case that did, with a misleading `request_mismatch` rather than
+a real security-relevant denial.
+
 ### Milestone 4b — Evidence bundle
 
 Deliverables
