@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict
-from typing import Literal
+from typing import Literal, Mapping, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from ferrule_artifact import artifact_hash as compute_artifact_hash
+from ferrule_artifact import build as build_artifact
 
+from .claims import extract_claims
+from .evidence import assemble_evidence
+from .generate import CompileResult, compile_operation
+from .mocktest import golden_case, run_mock_case
 from .models import (
     DocumentResponse,
+    EvidenceResponse,
     ExtractJobResponse,
     ExtractResult,
     NeedsInputResponse,
+    NodeCompileFailure,
+    NodeCompileRequest,
+    NodeCompileSuccess,
     OperationResponse,
     OperationsResponse,
     ResolutionOption,
@@ -25,9 +35,9 @@ from .models import (
     SourceCreate,
     SourceResponse,
 )
-from .openapi import OpenAPIIngestError, Operation, ingest
+from .openapi import OpenAPIIngestError, Operation, ingest, operation_from_mapping
 from .resolve import ResolutionStatus, resolve_operation
-from .store import Document, ExtractedSpec, Job, JobResumeError, Source, Store, new_id
+from .store import Document, ExtractedSpec, Job, JobResumeError, NodeVersion, Source, Store, new_id
 
 # Generous for hand-written OpenAPI docs, but bounds ingest cost against a
 # hostile upload (unbounded read + yaml.safe_load are otherwise a resource-
@@ -86,6 +96,44 @@ def create_app() -> FastAPI:
             raise APIError(409, "source_not_extracted", "source has no extracted OpenAPI document")
         return spec
 
+    def _compile_and_store(
+        source: Source, spec: ExtractedSpec, operation: Operation
+    ) -> NodeCompileSuccess | NodeCompileFailure:
+        # Shared by POST /nodes/compile's direct-resolve path and
+        # resume_job's kind="compile" path, so the two can never diverge
+        # in how a resolved operation actually gets compiled and recorded.
+        result: CompileResult = compile_operation(source.base_url, operation)
+        # CLAUDE.md invariant 9: plan_coverage is recorded on every compile
+        # attempt, including failures -- returned directly here, not
+        # folded into a generic error message, so it stays visible.
+        if result.plan is None or result.input_schema is None or result.output_schema is None:
+            return NodeCompileFailure(plan_coverage="not_representable", reasons=list(result.reasons))
+        artifact_hash = compute_artifact_hash(build_artifact(result.plan))
+        node_version = NodeVersion(
+            id=new_id("nv"),
+            node_id=new_id("nd"),
+            semver="1.0.0",
+            status="proposed",
+            artifact_hash=artifact_hash,
+            source_id=source.id,
+            source_document_id=spec.document_id,
+            operation=operation,
+            plan=result.plan,
+            input_schema=result.input_schema,
+            output_schema=result.output_schema,
+            coverage=result.coverage,
+            limitations=result.limitations,
+        )
+        store.put_node_version(node_version)
+        assert result.coverage != "not_representable"  # guaranteed above by the result.plan is None check
+        return NodeCompileSuccess(
+            node_version_id=node_version.id,
+            status="proposed",
+            artifact_hash=artifact_hash,
+            plan_coverage=result.coverage,
+            evidence_url=f"/nodes/{node_version.node_id}/versions/{node_version.semver}/evidence",
+        )
+
     @app.post("/sources", status_code=201, response_model=SourceResponse)
     def create_source(body: SourceCreate) -> SourceResponse:
         source = Source(new_id("src"), body.name, body.base_url, body.auth_kind)
@@ -129,11 +177,14 @@ def create_app() -> FastAPI:
         documents = [item for item in store.documents_for(source_id) if item.kind == "openapi"]
         if not documents:
             raise APIError(409, "openapi_document_missing", "source has no OpenAPI document")
+        used_document = documents[-1]
         try:
-            parsed = ingest(documents[-1].raw)
+            parsed = ingest(used_document.raw)
         except OpenAPIIngestError as error:
             raise APIError(422, "openapi_invalid", str(error)) from error
-        spec = ExtractedSpec(new_id("spec"), source_id, parsed.source_hash, parsed.openapi_version, parsed.operations)
+        spec = ExtractedSpec(
+            new_id("spec"), source_id, used_document.id, parsed.source_hash, parsed.openapi_version, parsed.operations
+        )
         store.put_spec(spec)
         result = ExtractResult(
             extracted_spec_id=spec.id,
@@ -181,8 +232,29 @@ def create_app() -> FastAPI:
             resume_url=f"/jobs/{job.id}/resume",
         )
 
+    @app.post("/nodes/compile", status_code=202)
+    def compile_node(body: NodeCompileRequest) -> NodeCompileSuccess | NodeCompileFailure | NeedsInputResponse:
+        source = require_source(body.source_id)
+        spec = require_spec(body.source_id)
+        resolution = resolve_operation(body.task, spec.operations)
+        if resolution.status is ResolutionStatus.NO_MATCH:
+            raise APIError(422, "operation_not_found", "no operation plausibly matches the task")
+        if resolution.status is ResolutionStatus.RESOLVED:
+            assert resolution.operation is not None
+            return _compile_and_store(source, spec, resolution.operation)
+        job = Job(new_id("job"), "compile", "needs_input", options=resolution.candidates, source_id=body.source_id)
+        store.put_job(job)
+        return NeedsInputResponse(
+            status="needs_input",
+            question=f"Multiple operations match '{body.task}'.",
+            options=[ResolutionOption(operation_id=item.operation_id, path=item.path) for item in resolution.candidates],
+            resume_url=f"/jobs/{job.id}/resume",
+        )
+
     @app.get("/jobs/{job_id}")
-    def get_job(job_id: str) -> ExtractJobResponse | ResolvedResponse | NeedsInputResponse:
+    def get_job(
+        job_id: str,
+    ) -> ExtractJobResponse | ResolvedResponse | NodeCompileSuccess | NodeCompileFailure | NeedsInputResponse:
         job = store.get_job(job_id)
         if job is None:
             raise APIError(404, "job_not_found", f"job {job_id} was not found")
@@ -201,6 +273,11 @@ def create_app() -> FastAPI:
                 poll_url=f"/jobs/{job.id}",
                 operation=OperationResponse.model_validate(operation_data),
             )
+        if job.kind == "compile" and job.status == "succeeded" and job.result is not None:
+            outcome = cast(Mapping[str, object], job.result["compile_outcome"])
+            if "node_version_id" in outcome:
+                return NodeCompileSuccess.model_validate(outcome)
+            return NodeCompileFailure.model_validate(outcome)
         return NeedsInputResponse(
             status="needs_input",
             question="Choose one matching operation.",
@@ -209,7 +286,7 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/jobs/{job_id}/resume")
-    def resume_job(job_id: str, body: ResumeRequest) -> ResolvedResponse:
+    def resume_job(job_id: str, body: ResumeRequest) -> ResolvedResponse | NodeCompileSuccess | NodeCompileFailure:
         try:
             job = store.resume_needs_input(job_id, body.choice)
         except JobResumeError as error:
@@ -219,12 +296,53 @@ def create_app() -> FastAPI:
                 raise APIError(409, "job_not_resumable", "job does not need input") from error
             raise APIError(422, "invalid_operation_choice", "choice is not one of the job options") from error
         assert job.result is not None
+        if job.kind == "compile":
+            assert job.source_id is not None
+            source = require_source(job.source_id)
+            spec = require_spec(job.source_id)
+            operation = operation_from_mapping(cast(Mapping[str, object], job.result["operation"]))
+            outcome = _compile_and_store(source, spec, operation)
+            store.put_job(Job(job.id, "compile", "succeeded", {"compile_outcome": outcome.model_dump()}))
+            return outcome
         return ResolvedResponse(
             job_id=job.id,
             status="succeeded",
             poll_url=f"/jobs/{job.id}",
             operation=OperationResponse.model_validate(job.result["operation"]),
         )
+
+    @app.get("/nodes/{node_id}/versions/{semver}/evidence", response_model=EvidenceResponse)
+    def get_evidence(node_id: str, semver: str) -> EvidenceResponse:
+        node_version = store.get_node_version(node_id, semver)
+        if node_version is None:
+            raise APIError(404, "node_version_not_found", f"node {node_id} version {semver} was not found")
+        document = store.get_document(node_version.source_document_id)
+        if document is None:
+            raise APIError(404, "document_not_found", "node version's source document no longer exists")
+        result = CompileResult(
+            coverage=node_version.coverage,
+            plan=node_version.plan,
+            input_schema=node_version.input_schema,
+            output_schema=node_version.output_schema,
+            limitations=node_version.limitations,
+        )
+        claims = extract_claims(document.raw, node_version.operation, result)
+        sample_input = golden_case(node_version.input_schema).input
+        mock_result = run_mock_case(node_version.plan, golden_case(node_version.input_schema))
+        evidence = assemble_evidence(
+            node_id=node_version.node_id,
+            semver=node_version.semver,
+            status=node_version.status,
+            artifact_hash=node_version.artifact_hash,
+            operation=node_version.operation,
+            result=result,
+            sample_input=sample_input,
+            claims=claims,
+            source_document_id=document.id,
+            source_hash=document.sha256,
+            mock_result=mock_result,
+        )
+        return EvidenceResponse.model_validate(evidence)
 
     return app
 

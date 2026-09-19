@@ -1,4 +1,4 @@
-"""Pydantic v2 boundary models for the milestone 3a HTTP API."""
+"""Pydantic v2 boundary models for the milestone 3a/4b HTTP API."""
 
 from typing import Literal
 
@@ -89,3 +89,113 @@ class NeedsInputResponse(StrictModel):
 
 class ResumeRequest(StrictModel):
     choice: str = Field(min_length=1)
+
+
+class NodeCompileConstraints(StrictModel):
+    methods: list[str] | None = None
+    side_effect_profile: str | None = None
+
+
+class NodeCompileRequest(StrictModel):
+    source_id: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    execution_class: Literal["trigger", "action", "transform", "condition", "terminal"] = "action"
+    sandbox_credential_ref: str | None = None
+    constraints: NodeCompileConstraints | None = None
+
+
+class NodeCompileSuccess(StrictModel):
+    node_version_id: str
+    status: Literal["proposed"]
+    artifact_hash: str
+    plan_coverage: Literal["representable", "representable_partial"]
+    evidence_url: str
+
+
+class NodeCompileFailure(StrictModel):
+    # CLAUDE.md invariant 9 / API.md: "plan_coverage is always present,
+    # including on failure" -- a not_representable compile is reported
+    # here, not folded into the generic error envelope, so plan_coverage
+    # stays a first-class, always-visible field rather than one more
+    # detail buried in an error message.
+    status: Literal["failed"] = "failed"
+    plan_coverage: Literal["not_representable"]
+    reasons: list[str]
+
+
+class RequestPreviewEntry(StrictModel):
+    step_id: str
+    method: str
+    url: str
+    headers: dict[str, str]
+    rendered_from: dict[str, dict[str, object]]
+
+
+class EvidenceCapabilities(StrictModel):
+    hosts: list[str]
+    methods: list[str]
+    secrets: list[str]
+    egress_default: str
+
+
+class Assumption(StrictModel):
+    claim: str
+    basis: str
+    source_document_id: str
+    source_span: list[int]
+
+
+class StaticVerification(StrictModel):
+    passed: bool
+    checks: list[str]
+
+
+class MockVerification(StrictModel):
+    passed: bool
+    cases: int
+
+
+class SandboxVerification(StrictModel):
+    passed: bool
+    cases: int
+    account: str | None
+
+
+class PermissionVerification(StrictModel):
+    passed: bool
+    attempted_violations: int
+
+
+class Verification(StrictModel):
+    static: StaticVerification
+    mock: MockVerification
+    sandbox: SandboxVerification
+    permission: PermissionVerification
+
+
+class TraceEntry(StrictModel):
+    case: str
+    trace_url: str
+
+
+class Provenance(StrictModel):
+    source_documents: list[str]
+    compiler_version: str
+    builder_model: str
+    prompt_version: str
+    plan_coverage: str
+
+
+class EvidenceResponse(StrictModel):
+    artifact_hash: str
+    status: str
+    behaviour_summary: str
+    request_preview: list[RequestPreviewEntry]
+    input_schema: dict[str, object]
+    output_schema: dict[str, object]
+    capabilities: EvidenceCapabilities
+    side_effect_profile: str
+    assumptions: list[Assumption]
+    verification: Verification
+    traces: list[TraceEntry]
+    provenance: Provenance

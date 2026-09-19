@@ -7,6 +7,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 4b closed: evidence bundle, POST /nodes/compile (2026-09-19)
+
+This milestone's own deliverables name a real endpoint
+(GET /nodes/{id}/versions/{v}/evidence), so this is also where "full node
+artifact assembly" -- explicitly deferred in 3b's own PHASES.md entry --
+finally happened: a node_id/node_version concept, a real POST
+/nodes/compile tying 3a's resolve + 3b's generate + 3c's claims/mock
+together through the actual documented API for the first time, and
+persistence for both.
+
+New evidence.py assembles the exact docs/API.md shape from data this
+compiler already has. Two fields are honest placeholders rather than
+fabricated: builder_model/prompt_version assume an LLM per SPEC.md section
+8, which 3b's scope decision doesn't use, so they say so explicitly rather
+than inventing a plausible-looking fake provider string. request_preview
+is built by capturing the real Request the interpreter's own run()
+produces, not by reimplementing URL/header/query composition a second
+time.
+
+POST /nodes/compile reuses 3a's resolve_operation for the ambiguous path
+(a Job with kind="compile" now remembers which source to finish compiling
+against on resume) and a shared _compile_and_store helper for both the
+direct and post-resume paths so they can't diverge. A not_representable
+result returns as a first-class {"status": "failed", "plan_coverage":
+"not_representable", "reasons": [...]} body, not folded into the generic
+error envelope -- CLAUDE.md invariant 9 requires plan_coverage stay
+visible on every attempt, including failures.
+
+Found and fixed while writing end-to-end API tests, not the golden-path
+library tests (which all passed first try): GET /jobs/{job_id}'s declared
+FastAPI return type was never updated for the new compile response shapes,
+so polling a finished compile job after resuming it failed with a
+ResponseValidationError. Fixed; covered by a regression test that polls
+after resume specifically.
+
+gate-4b passes (8/8); 104/104 full suite; mypy --strict clean (13 files);
+make conform unaffected. See PHASES.md milestone 4b for the golden-fixture
+field-by-field verification record.
+
 ### Milestone 4a audit: stale test-cache finding fixed (2026-09-19)
 
 Found by re-running gate-4a twice rather than trusting one green run:

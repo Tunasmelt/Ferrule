@@ -8,6 +8,8 @@ from threading import RLock
 from typing import Literal
 from uuid import uuid4
 
+from ferrule_interpreter.coverage import Coverage
+
 from .openapi import Operation
 
 
@@ -44,6 +46,7 @@ class Document:
 class ExtractedSpec:
     id: str
     source_id: str
+    document_id: str
     source_hash: str
     openapi_version: str
     operations: tuple[Operation, ...]
@@ -56,6 +59,32 @@ class Job:
     status: str
     result: dict[str, object] | None = None
     options: tuple[Operation, ...] = ()
+    # Only set for kind="compile": which source a needs_input job should
+    # finish compiling against once resumed. resolve/extract jobs don't
+    # need it, since resuming them only ever returns the resolved
+    # operation rather than continuing on to compile it.
+    source_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NodeVersion:
+    id: str  # node_version_id (e.g. "nv_...")
+    node_id: str  # e.g. "nd_...", stable across versions of the same node.
+    # No same-node-different-version identity tracking exists yet -- every
+    # compile mints a fresh node_id, always at semver "1.0.0". Real
+    # versioning (matching an existing node, bumping its semver) is a
+    # separate, larger concern deferred past this milestone.
+    semver: str
+    status: str
+    artifact_hash: str
+    source_id: str
+    source_document_id: str
+    operation: Operation
+    plan: dict[str, object]
+    input_schema: dict[str, object]
+    output_schema: dict[str, object]
+    coverage: Coverage
+    limitations: tuple[str, ...]
 
 
 class Store:
@@ -67,6 +96,7 @@ class Store:
         self._documents: dict[str, Document] = {}
         self._specs: dict[str, ExtractedSpec] = {}
         self._jobs: dict[str, Job] = {}
+        self._node_versions: dict[tuple[str, str], NodeVersion] = {}
 
     def put_source(self, source: Source) -> None:
         with self._lock:
@@ -124,6 +154,19 @@ class Store:
             selected = next((item for item in job.options if item.operation_id == choice), None)
             if selected is None:
                 raise JobResumeError("invalid_choice")
-            resolved = Job(job.id, "resolve", "succeeded", {"operation": asdict(selected)})
+            # Preserve the original kind/source_id rather than hardcoding
+            # "resolve": a kind="compile" job (POST /nodes/compile's
+            # needs_input path) must still be recognizable as one after
+            # resuming, so the caller (api.py's resume_job) knows to finish
+            # compiling rather than just returning the resolved operation.
+            resolved = Job(job.id, job.kind, "succeeded", {"operation": asdict(selected)}, source_id=job.source_id)
             self._jobs[job.id] = deepcopy(resolved)
             return deepcopy(resolved)
+
+    def put_node_version(self, node_version: NodeVersion) -> None:
+        with self._lock:
+            self._node_versions[(node_version.node_id, node_version.semver)] = deepcopy(node_version)
+
+    def get_node_version(self, node_id: str, semver: str) -> NodeVersion | None:
+        with self._lock:
+            return deepcopy(self._node_versions.get((node_id, semver)))

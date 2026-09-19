@@ -1554,19 +1554,105 @@ prior failures, but would have spuriously broken any future probe or
 sandbox case that did, with a misleading `request_mismatch` rather than
 a real security-relevant denial.
 
-### Milestone 4b — Evidence bundle
+### Milestone 4b — Evidence bundle — ✅ CLOSED 2026-09-19
+
+**This milestone's own literal deliverable text names a real endpoint**
+(`GET /nodes/{id}/versions/{v}/evidence`), unlike 3b/3c which stayed
+library-level by deliberate scope decision — so this is also where "full
+node artifact assembly," explicitly deferred in 3b's own PHASES.md entry,
+finally had to happen: a `node_id`/`node_version` concept, a real
+`POST /nodes/compile` (API.md's own compile endpoint, tying 3a's resolve +
+3b's generate + 3c's claims/mock together for the first time through the
+actual documented API surface, not just as internally-composable library
+calls), and persistence for both.
 
 Deliverables
-- Evidence bundle assembly: behaviour summary, exact request preview,
-  redacted trace, test results, capability list, assumptions with citations
-- `GET /nodes/{id}/versions/{v}/evidence` per `docs/API.md`
+- [x] New `services/compiler/python/ferrule_compiler/evidence.py`:
+      `assemble_evidence(...)` builds the exact `docs/API.md` shape from
+      data this compiler already has. Two fields are deliberate, honestly-
+      labeled placeholders rather than fabricated: `provenance.builder_model`/
+      `.prompt_version` assume an LLM per SPEC.md section 8, which 3b's own
+      scope decision doesn't use — inventing a plausible-looking fake
+      provider/model string here would misrepresent that decision, so they
+      read `"none (deterministic template compiler, no LLM -- see
+      milestone 3b)"` and equivalent instead. `request_preview` is built by
+      capturing the real `Request` the interpreter's own `run()` produces
+      (a stub transport records it before returning a canned response) —
+      reusing the actual rendering path rather than reimplementing URL/
+      header/query composition a second time for a preview that could
+      silently drift from what execution actually does.
+- [x] `POST /nodes/compile` and `GET /nodes/{node_id}/versions/{semver}/evidence`,
+      per `docs/API.md`, wired into `api.py`. `POST /nodes/compile` reuses
+      3a's `resolve_operation` for the ambiguous/needs_input path (a
+      `Job` with `kind="compile"` remembers which source to finish
+      compiling against once resumed — `Store.resume_needs_input` was
+      changed to preserve the original job kind/source_id instead of
+      hardcoding `"resolve"`, so a resumed compile job is still
+      recognizable as one) and a shared `_compile_and_store` helper for
+      both the direct-resolve and post-resume paths, so they can't diverge
+      in how a resolved operation actually gets compiled and recorded.
+      A `not_representable` result is returned as a first-class
+      `{"status": "failed", "plan_coverage": "not_representable",
+      "reasons": [...]}` body (422), not folded into the generic error
+      envelope — CLAUDE.md invariant 9 ("`plan_coverage` is recorded on
+      every compile attempt, including failures") means it must stay a
+      visible, always-present field, not one more detail buried in an
+      error message.
+- [x] `NodeVersion` added to `store.py` (mutex-guarded, matching the
+      existing `Source`/`Document`/`Job` pattern): `node_id`/`semver` are
+      always freshly minted per compile at a fixed `"1.0.0"` — real
+      same-node version identity/bumping is a separate, larger concern
+      explicitly deferred past this milestone, noted inline in the
+      dataclass.
+- [x] `ExtractedSpec` gained a `document_id` field (which upload produced
+      the ingested spec) — needed so evidence assembly knows which raw
+      document to resolve claim source-spans against; this was a real,
+      previously-unnoticed gap (nothing before 4b needed to trace an
+      extracted spec back to its source document).
 
 Test criteria
-- [ ] Evidence bundle renders for every phase-3 node (20/20)
-- [ ] Every field in the `docs/API.md` evidence schema is populated (no
-      silently-omitted field) for at least one node used as a golden fixture
+- [x] Evidence bundle renders for every phase-3 node (20/20) — all 23 real
+      GET operations across the 8 fixtures render successfully, proven two
+      ways: at the library level (`test_compiler_evidence.py`, calling
+      `assemble_evidence` directly) and end-to-end through the real HTTP
+      API (`test_compiler_nodes_api.py`: register source → upload → extract
+      → `POST /nodes/compile` → `GET .../evidence`, for every real
+      operation, using each operation's own summary+description+
+      operation_id as its task so resolution succeeds by construction —
+      this test proves compile+evidence *wiring*, not `resolve.py`'s
+      fuzzy-match quality, which `test_compiler_resolve.py` already covers).
+- [x] Every field in the `docs/API.md` evidence schema is populated (no
+      silently-omitted field) for at least one node used as a golden
+      fixture — github's `repos/get`, real values end to end: real
+      rendered `request_preview` URL, real `assumptions` from `claims.py`,
+      real `mock` verification from `mocktest.py`, and (since no automated
+      per-node sandbox/permission pipeline exists yet — 4a's sandbox run
+      was a standalone, hardcoded Go test, not wired into this Python
+      pipeline) real, milestone-4a-sourced `sandbox`/`permission` values
+      passed in explicitly for this one fixture, honestly distinguished
+      from every other node's default "not yet run" state (`{"passed":
+      false, "cases": 0, "account": null}`) rather than fabricating sandbox
+      results this compiler didn't actually produce for them. `traces` is
+      the one deliberately-empty field across every node: no
+      `GET /v1/traces/{id}` backing store exists anywhere in this codebase
+      yet, so it is an honest empty list — present, not omitted, per the
+      test criterion's own wording — rather than a trace_url pointing at
+      nothing real.
 
-Gate `make gate-4b`
+Found and fixed while writing the end-to-end API tests, not the golden-
+path library tests (which all passed on the first try and would not have
+caught this): `GET /jobs/{job_id}`'s declared FastAPI return type was
+never updated to include the new `NodeCompileSuccess`/`NodeCompileFailure`
+response shapes, even though the runtime branch handling `kind="compile"`
+jobs was added correctly — polling a finished compile job after resuming
+it failed with a `ResponseValidationError` (FastAPI validating the real
+response against the wrong Union member). Fixed by updating the
+annotation; covered by a regression test that specifically polls a job
+after resume rather than only checking the resume response itself.
+
+Gate `make gate-4b` — 8/8 tests pass; `make check` (104/104 Python tests),
+`mypy --strict` (13 source files, clean), and `make conform` (20/20) all
+still pass with no regressions.
 
 ### Milestone 4c — Approval, signing, freeze
 

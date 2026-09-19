@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b gate-3c gate-3 gate-4a gate-4
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b gate-3c gate-3 gate-4a gate-4b gate-4
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -88,4 +88,7 @@ gate-4a:
 	go test ./services/proxy/... -run '^TestSandbox' -count=1 -v
 	FERRULE_SANDBOX_LIVE=1 go test ./services/proxy/... -run '^TestSandbox' -count=1 -v
 
-gate-4: gate-4a
+gate-4b:
+	python -m unittest tests.test_compiler_evidence tests.test_compiler_nodes_api -v
+
+gate-4: gate-4a gate-4b
