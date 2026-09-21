@@ -1692,31 +1692,112 @@ constraint to actually be violated by what gets compiled. Worth revisiting
 once a future milestone's compiler can produce anything else; validating
 constraints that can never currently be violated today would be dead code.
 
-### Milestone 4c — Approval, signing, freeze
+### Milestone 4c — Approval, signing, freeze — 🟡 TOOLING BUILT, STUDY OPEN 2026-09-22
+
+**Scope decision, made with the user before writing code**: the reviewer
+timing study requires real, un-fabricated human-timing data (3 people
+unfamiliar with the API, 5 nodes each). Asked the user up front rather
+than inventing plausible-looking numbers; they chose to have the tooling
+built and verified first, with the study itself run later against it.
+Everything else below is built, verified, and closed; the study is the one
+explicitly open item keeping this milestone from being marked ✅ CLOSED.
 
 Deliverables
-- `POST /nodes/{id}/versions/{v}/approve` → signed, immutable artifact
-  (reuses phase-0 sign/verify)
-- `ferrule node {verify,review,approve}` CLI commands
-- Reviewer timing study (3 people, 5 nodes each)
+- [x] `POST /nodes/{node_id}/versions/{semver}/approve` → signed,
+      immutable artifact, reusing phase-0 sign/verify directly
+      (`ferrule_artifact.build`/`sign`/`generate_dev_keypair`, the same
+      functions `ferrule artifact sign`/`verify` already use — not a
+      reimplementation). A fresh dev keypair is generated once per
+      compiler-service process (in-memory, matching every other piece of
+      state in this service — `CredentialStore`, `ArtifactCache`, etc. —
+      real signing-key custody is a separate, much larger concern than
+      this milestone). Returns `200` with the signed artifact (`plan`,
+      base64 `signature`, `public_key_pem`, `artifact_hash`,
+      `approved_at`, `reviewer_note`); `409 already_approved` on a second
+      attempt (API.md's documented behavior); `404` for an unknown node
+      version.
+- [x] New `GET /nodes/{node_id}/versions/{semver}` (`NodeVersionDetail`) —
+      a deliberate API.md extension, same rationale as 3a's
+      `GET /sources/{id}/operations`: the evidence bundle's own schema
+      doesn't expose the raw `plan` (only derived schemas and a rendered
+      preview), so `ferrule node verify` needs a separate place to fetch
+      the exact bytes a signature was computed over.
+- [x] Invariant 4 enforced at the store/"ORM" layer, not just the API
+      surface, two ways: (1) `NodeVersion` is a frozen dataclass — direct
+      attribute mutation raises `FrozenInstanceError` at the language
+      level, proven by a test that attempts it directly; (2)
+      `Store.approve_node_version` uses `dataclasses.replace()`, which
+      copies every field verbatim except the ones explicitly passed
+      (`status`/`signature`/`public_key_pem`/`approved_at`/
+      `reviewer_note`) — there is no code path inside it that could alter
+      `plan`/`input_schema`/`output_schema`/`operation`/`coverage`, proven
+      by a test that approves a version and asserts every other field is
+      byte-identical to before. `Store.put_node_version` additionally
+      refuses to overwrite an already-approved `(node_id, semver)` entry
+      at all (defense-in-depth: today's only caller always mints a fresh
+      `node_id` per compile, so this path is unreachable via the current
+      API, but invariant 4 says "no code path," not "no code path reachable
+      today").
+- [x] `ferrule node {review,verify,approve}` CLI commands
+      (`cli/ferrule_cli/__main__.py`), the first CLI surface in this
+      project to make real HTTP calls (`httpx`, promoted from a dev-only
+      to a real dependency) rather than operating on local files —
+      necessary because "review"/"approve" are inherently about a live
+      compiler service's state, not something a local-file-only command
+      could do. `review` fetches and pretty-prints the evidence bundle
+      (behaviour, request preview, capabilities, assumptions,
+      verification, provenance) for a human to actually read; `verify`
+      fetches a node version's record and calls phase-0's `verify()`
+      directly against its signature; `approve` POSTs a reviewer note and
+      prints the result. Tested against a real running `uvicorn` instance
+      of the compiler service in a background thread (not `TestClient`'s
+      in-process shortcut), since what these commands actually prove —
+      the CLI, the ASGI app, and phase-0's signature verification
+      genuinely interoperating over real HTTP — is exactly what an
+      in-process call would paper over.
+- [ ] **Reviewer timing study (3 people, 5 nodes each) — not yet run.**
+      To run it: start the compiler service
+      (`python -m uvicorn ferrule_compiler.api:app --port 8000` — needs
+      the `dev` extra installed for `uvicorn`, `pip install -e ".[dev]"`),
+      register a source and compile 5 nodes (any mix of the 23 real GET
+      operations across `tests/fixtures/openapi/` works), then have each
+      of 3 people unfamiliar with this API run
+      `ferrule node review <node_id> <semver> --base-url http://localhost:8000`
+      followed by either `ferrule node approve ... --reviewer-note "..."`
+      or nothing (reject = declining to approve — no separate CLI verb is
+      specified for this milestone), timing each review-to-decision
+      interval by hand. Record the 15 individual times and their median in
+      this section once run; no pass threshold applies at this gate.
 
 Test criteria
-- [ ] Approval produces a signed, immutable artifact
-- [ ] A second approval attempt on the same version is rejected with `409`
-- [ ] No code path allows mutating an approved `node_version` row except its
-      `status` field (this is invariant 4 — check it against the actual
-      schema/ORM layer, not just the API surface)
-- [ ] Reviewer timing: 3 people unfamiliar with the API approve or reject 5
-      nodes each; median review time recorded (no pass threshold at this
-      gate — it is the baseline later phases are measured against)
+- [x] Approval produces a signed, immutable artifact — verified two ways:
+      an API-level test decodes the returned signature and calls
+      `ferrule_artifact.verify()` against it directly (not just checking
+      the HTTP status), and separately confirms a *tampered* copy of the
+      same plan fails verification against the same signature/key (proves
+      real cryptography, not a rubber-stamp check).
+- [x] A second approval attempt on the same version is rejected with `409`
+- [x] No code path allows mutating an approved `node_version` row except
+      its `status` field — checked at the store layer directly (see
+      Deliverables above), not just by observing API responses.
+- [ ] Reviewer timing study — open, see above.
 
-Gate `make gate-4c`
+Gate `make gate-4c` — 12/12 tests pass (`test_compiler_approval.py`:
+8 tests covering the API and the store-layer immutability guarantees
+directly; `test_cli_node.py`: 4 tests against a real running server);
+`make check` (117/117 Python tests), `mypy --strict` (13 source files,
+clean), and `make conform` (20/20) all still pass with no regressions.
 
-### Phase 4 gate
+### Phase 4 gate — 🟡 AUTOMATED CHECKS GREEN, MILESTONE 4C'S HUMAN STUDY OPEN
 
 `make gate-4` = `gate-4a` + `gate-4b` + `gate-4c`.
 
-Exit when: `make gate-4` exits 0.
+`make gate-4` exits 0 (verified 2026-09-22) — every *automated* test
+criterion across 4a/4b/4c passes. Not marked ✅ CLOSED because milestone
+4c's reviewer timing study (a required test criterion, not just a
+deliverable) hasn't been run yet — it needs real human participants, not
+something to fabricate or wave through. See milestone 4c above for exactly
+how to run it once people are available.
 
 ---
 

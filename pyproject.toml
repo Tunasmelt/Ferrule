@@ -6,10 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "ferrule"
 version = "0.0.0"
 requires-python = ">=3.11"
-dependencies = ["cel-python>=0.5.0", "cryptography>=44", "jsonschema>=4.23", "fastapi>=0.115", "pydantic>=2", "pyyaml>=6"]
+dependencies = ["cel-python>=0.5.0", "cryptography>=44", "jsonschema>=4.23", "fastapi>=0.115", "pydantic>=2", "pyyaml>=6", "httpx>=0.28"]
 
 [project.optional-dependencies]
-dev = ["httpx>=0.28"]
+# Needed to actually run the compiler service (`python -m uvicorn
+# ferrule_compiler.api:app`) -- for the CLI's own tests, and for a real
+# reviewer to have something to point `ferrule node review/verify/approve`
+# at. Not needed by the library/API code itself, hence optional.
+dev = ["uvicorn>=0.34"]
 
 [project.scripts]
 ferrule = "ferrule_cli.__main__:main"

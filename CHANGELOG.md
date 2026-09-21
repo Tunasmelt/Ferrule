@@ -7,6 +7,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 4c tooling built: approval, signing, CLI (2026-09-22)
+
+Scope decision made with the user before writing code: the reviewer timing
+study (3 people, 5 nodes each) needs real, un-fabricated human-timing
+data. Asked up front rather than inventing plausible numbers; the user
+chose to have the tooling built and verified first, with the study run
+later against it. Milestone 4c is therefore tooling-complete but not
+closed -- see PHASES.md for exactly how to run the study once people are
+available.
+
+New POST /nodes/{node_id}/versions/{semver}/approve reuses phase-0
+sign/verify directly (not a reimplementation) -- a fresh dev keypair per
+compiler-service process, matching every other piece of state in this
+service. Returns 200 with the signed artifact (plan, signature, public
+key, artifact_hash); 409 on a second approval attempt; 404 for an unknown
+node version. New GET /nodes/{id}/versions/{semver} exposes the raw plan
+(the evidence bundle deliberately doesn't) so verification has something
+to check a signature against.
+
+Invariant 4 (approved node_version rows are immutable except status)
+enforced at the store layer two ways, both proven by direct tests rather
+than just observing API responses: NodeVersion is a frozen dataclass
+(FrozenInstanceError on direct mutation), and Store.approve_node_version
+uses dataclasses.replace(), which copies every other field verbatim --
+there is no code path inside it that could alter plan/schema/operation
+data. put_node_version additionally refuses to overwrite an already-
+approved entry, defense-in-depth against a future caller even though
+unreachable via today's API.
+
+New `ferrule node {review,verify,approve}` CLI commands -- the first CLI
+surface in this project making real HTTP calls (httpx promoted from a
+dev-only to a real dependency) rather than operating on local files, since
+review/approve are inherently about a live service's state. Tested against
+a real running uvicorn instance in a background thread, not an in-process
+shortcut, since that's exactly what proves the CLI, the ASGI app, and
+phase-0's verification genuinely interoperate.
+
+gate-4c passes (12/12); gate-4 (the whole phase) exits 0; 117/117 full
+Python suite; mypy --strict clean; make conform unaffected.
+
 ### Milestone 4b audit: stuck-job-on-compile-failure fixed (2026-09-22)
 
 Found by reproducing it directly (forcing a real exception mid-resume),

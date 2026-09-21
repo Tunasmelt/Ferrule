@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from threading import RLock
 from typing import Literal
 from uuid import uuid4
@@ -21,6 +21,14 @@ class JobResumeError(Exception):
     """Raised by Store.resume_needs_input; reason maps 1:1 to an HTTP status in api.py."""
 
     def __init__(self, reason: Literal["not_found", "not_resumable", "invalid_choice"]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class NodeVersionUpdateError(Exception):
+    """Raised by Store.put_node_version/approve_node_version; reason maps 1:1 to an HTTP status in api.py."""
+
+    def __init__(self, reason: Literal["not_found", "already_approved", "immutable"]) -> None:
         super().__init__(reason)
         self.reason = reason
 
@@ -85,6 +93,19 @@ class NodeVersion:
     output_schema: dict[str, object]
     coverage: Coverage
     limitations: tuple[str, ...]
+    # Set only by Store.approve_node_version -- CLAUDE.md invariant 4
+    # ("approved artifacts are immutable; there is no update path on an
+    # approved node_version row other than status"). These four fields are
+    # the one narrow exception, and only ever move from None -> a value
+    # exactly once (approve_node_version refuses a version that already
+    # has a signature); every other field is copied verbatim via
+    # dataclasses.replace(), which is the only place these fields are ever
+    # set, so there is no code path that can alter plan/schema/operation
+    # data after creation.
+    signature: str | None = None
+    public_key_pem: str | None = None
+    approved_at: str | None = None
+    reviewer_note: str | None = None
 
 
 class Store:
@@ -164,9 +185,58 @@ class Store:
             return deepcopy(resolved)
 
     def put_node_version(self, node_version: NodeVersion) -> None:
+        """Create a new node version record.
+
+        Refuses to overwrite an existing (node_id, semver) that is already
+        approved -- CLAUDE.md invariant 4, enforced at this layer (not just
+        the API surface) so no future caller of this method, by mistake or
+        by design, can silently replace an approved version's plan/schema
+        data with a fresh unapproved one under the same key. Today's only
+        caller (_compile_and_store) always mints a fresh node_id per call,
+        so this can't happen via the current API either -- this guard is
+        defense-in-depth against a future caller, not a fix for an
+        observed bug.
+        """
         with self._lock:
-            self._node_versions[(node_version.node_id, node_version.semver)] = deepcopy(node_version)
+            key = (node_version.node_id, node_version.semver)
+            existing = self._node_versions.get(key)
+            if existing is not None and existing.status == "approved":
+                raise NodeVersionUpdateError("immutable")
+            self._node_versions[key] = deepcopy(node_version)
 
     def get_node_version(self, node_id: str, semver: str) -> NodeVersion | None:
         with self._lock:
             return deepcopy(self._node_versions.get((node_id, semver)))
+
+    def approve_node_version(
+        self, node_id: str, semver: str, signature: str, public_key_pem: str, approved_at: str, reviewer_note: str
+    ) -> NodeVersion:
+        """Atomically transition a node version to approved, exactly once.
+
+        Uses dataclasses.replace() rather than constructing a new
+        NodeVersion by hand: replace() copies every field verbatim except
+        the ones explicitly passed, so this is the one place approval
+        fields are set, and it is structurally incapable of altering
+        plan/input_schema/output_schema/operation/coverage/limitations --
+        there is no code path here that could mutate them even by mistake,
+        which is the literal invariant-4 test criterion ("no code path
+        allows mutating an approved node_version row except its status
+        field"), checked at this store layer rather than only the API
+        surface.
+        """
+        with self._lock:
+            existing = self._node_versions.get((node_id, semver))
+            if existing is None:
+                raise NodeVersionUpdateError("not_found")
+            if existing.status == "approved":
+                raise NodeVersionUpdateError("already_approved")
+            approved = replace(
+                existing,
+                status="approved",
+                signature=signature,
+                public_key_pem=public_key_pem,
+                approved_at=approved_at,
+                reviewer_note=reviewer_note,
+            )
+            self._node_versions[(node_id, semver)] = deepcopy(approved)
+            return deepcopy(approved)

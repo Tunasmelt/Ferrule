@@ -3,7 +3,9 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
+import httpx
 from ferrule_artifact import (
     CanonicalizationError,
     artifact_hash,
@@ -32,6 +34,59 @@ def _write_exclusive(path: Path, contents: bytes, mode: int) -> None:
     except OSError:
         path.unlink(missing_ok=True)
         raise
+
+
+def _print_review(evidence: dict[str, Any]) -> None:
+    """Human-readable rendering of a GET .../evidence bundle for `ferrule node review`.
+
+    Operates on loosely-typed parsed JSON by design (this is a formatting
+    helper over an HTTP response body, not a boundary type in the sense
+    CLAUDE.md's "no Any in a public signature" convention means for
+    /services and /packages) rather than a full typed mirror of
+    ferrule_compiler's Pydantic evidence models.
+    """
+    print(f"Status: {evidence['status']}")
+    print(f"Artifact hash: {evidence['artifact_hash']}")
+    print()
+    print("Behaviour:")
+    print(f"  {evidence['behaviour_summary']}")
+    print()
+    print("Request preview:")
+    for step in evidence["request_preview"]:
+        print(f"  [{step['step_id']}] {step['method']} {step['url']}")
+        for name, value in step["headers"].items():
+            print(f"    header {name}: {value}")
+        print(f"    input: {json.dumps(step['rendered_from']['input'], sort_keys=True)}")
+    print()
+    capabilities = evidence["capabilities"]
+    print("Capabilities:")
+    print(f"  hosts: {', '.join(capabilities['hosts'])}")
+    print(f"  methods: {', '.join(capabilities['methods'])}")
+    print(f"  secrets: {', '.join(capabilities['secrets']) or '(none)'}")
+    print(f"  egress_default: {capabilities['egress_default']}")
+    print(f"  side_effect_profile: {evidence['side_effect_profile']}")
+    print()
+    print("Assumptions:")
+    assumptions = evidence["assumptions"]
+    if not assumptions:
+        print("  (none)")
+    for assumption in assumptions:
+        print(f"  - {assumption['claim']}: {assumption['basis']}")
+        print(f"    source: {assumption['source_document_id']} span={assumption['source_span']}")
+    print()
+    print("Verification:")
+    verification = evidence["verification"]
+    for name in ("static", "mock", "sandbox", "permission"):
+        section = verification[name]
+        detail = {key: value for key, value in section.items() if key != "passed"}
+        print(f"  {name}: passed={section['passed']} {detail}")
+    print()
+    provenance = evidence["provenance"]
+    print("Provenance:")
+    print(f"  compiler_version: {provenance['compiler_version']}")
+    print(f"  plan_coverage: {provenance['plan_coverage']}")
+    print(f"  builder_model: {provenance['builder_model']}")
+    print(f"  source_documents: {', '.join(provenance['source_documents'])}")
 
 
 def main() -> int:
@@ -69,6 +124,19 @@ def main() -> int:
     plan_run.add_argument("--input", required=True)
     plan_run.add_argument("--fixtures", required=True, type=Path)
 
+    node = commands.add_parser("node")
+    node_commands = node.add_subparsers(dest="node_command", required=True)
+    for node_command_name in ("review", "verify"):
+        node_command = node_commands.add_parser(node_command_name)
+        node_command.add_argument("node_id")
+        node_command.add_argument("semver")
+        node_command.add_argument("--base-url", required=True)
+    node_approve = node_commands.add_parser("approve")
+    node_approve.add_argument("node_id")
+    node_approve.add_argument("semver")
+    node_approve.add_argument("--base-url", required=True)
+    node_approve.add_argument("--reviewer-note", required=True)
+
     args = parser.parse_args()
     try:
         if args.command == "plan":
@@ -86,6 +154,50 @@ def main() -> int:
             for finding in findings:
                 print(json.dumps(vars(finding), sort_keys=True))
             return 1 if findings else 0
+
+        if args.command == "node":
+            with httpx.Client(base_url=args.base_url, timeout=10.0) as client:
+                if args.node_command == "review":
+                    response = client.get(f"/nodes/{args.node_id}/versions/{args.semver}/evidence")
+                    if response.status_code != 200:
+                        parser.error(f"review failed: {response.status_code} {response.text}")
+                    _print_review(response.json())
+                    return 0
+                if args.node_command == "verify":
+                    response = client.get(f"/nodes/{args.node_id}/versions/{args.semver}")
+                    if response.status_code != 200:
+                        parser.error(f"verify failed: {response.status_code} {response.text}")
+                    body = response.json()
+                    if body["status"] != "approved":
+                        print(f"not approved (status={body['status']}); nothing to verify", file=sys.stderr)
+                        return 1
+                    decoded_signature = decode_signature(body["signature"])
+                    if decoded_signature is None or not verify(
+                        build(body["plan"]), decoded_signature, body["public_key_pem"].encode("ascii")
+                    ):
+                        print("verification failed", file=sys.stderr)
+                        return 1
+                    print("verified")
+                    return 0
+                # args.node_command == "approve"
+                response = client.post(
+                    f"/nodes/{args.node_id}/versions/{args.semver}/approve",
+                    json={"reviewer_note": args.reviewer_note},
+                )
+                if response.status_code != 200:
+                    parser.error(f"approve failed: {response.status_code} {response.text}")
+                body = response.json()
+                print(json.dumps(
+                    {
+                        "node_version_id": body["node_version_id"],
+                        "status": body["status"],
+                        "artifact_hash": body["artifact_hash"],
+                        "approved_at": body["approved_at"],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ))
+                return 0
 
         if args.artifact_command == "keygen":
             args.directory.mkdir(parents=True, exist_ok=True)
@@ -139,7 +251,7 @@ def main() -> int:
                 print("verification failed", file=sys.stderr)
                 return 1
             print("verified")
-    except (CanonicalizationError, OSError, PlanRejected, TypeError, ValueError) as error:
+    except (CanonicalizationError, OSError, PlanRejected, TypeError, ValueError, httpx.HTTPError) as error:
         parser.error(str(error))
     return 0
 

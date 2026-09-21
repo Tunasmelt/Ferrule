@@ -1,4 +1,4 @@
-"""Pydantic v2 boundary models for the milestone 3a/4b HTTP API."""
+"""Pydantic v2 boundary models for the milestone 3a/4b/4c HTTP API."""
 
 from typing import Literal
 
@@ -199,3 +199,44 @@ class EvidenceResponse(StrictModel):
     verification: Verification
     traces: list[TraceEntry]
     provenance: Provenance
+
+
+class ApproveRequest(StrictModel):
+    reviewer_note: str = Field(min_length=1)
+
+
+class ApprovalResponse(StrictModel):
+    node_version_id: str
+    node_id: str
+    semver: str
+    status: Literal["approved"]
+    artifact_hash: str
+    # The exact canonical bytes ferrule_artifact.build() would reproduce
+    # from this plan, and the detached signature/key over them -- reused
+    # directly by `ferrule node verify` (phase-0's verify(), not a
+    # reimplementation) rather than a bespoke approval-token format.
+    plan: dict[str, object]
+    signature: str
+    public_key_pem: str
+    approved_at: str
+    reviewer_note: str
+
+
+class NodeVersionDetail(StrictModel):
+    """A node version's own record -- distinct from the human-facing evidence
+    bundle, and the one place the raw `plan` is exposed (evidence.md's
+    schema deliberately doesn't include it, only derived input/output
+    schemas and a rendered preview) so `ferrule node verify` can
+    reconstruct and check a signature without needing a locally-saved copy.
+    """
+
+    node_version_id: str
+    node_id: str
+    semver: str
+    status: str
+    artifact_hash: str
+    plan: dict[str, object]
+    signature: str | None
+    public_key_pem: str | None
+    approved_at: str | None
+    reviewer_note: str | None

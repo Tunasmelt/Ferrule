@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Literal, Mapping, cast
 from uuid import uuid4
 
@@ -12,12 +13,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from ferrule_artifact import artifact_hash as compute_artifact_hash
 from ferrule_artifact import build as build_artifact
+from ferrule_artifact import encode_signature, generate_dev_keypair, sign
 
 from .claims import extract_claims
 from .evidence import assemble_evidence
 from .generate import CompileResult, compile_operation
 from .mocktest import golden_case, run_mock_case
 from .models import (
+    ApprovalResponse,
+    ApproveRequest,
     DocumentResponse,
     EvidenceResponse,
     ExtractJobResponse,
@@ -26,6 +30,7 @@ from .models import (
     NodeCompileFailure,
     NodeCompileRequest,
     NodeCompileSuccess,
+    NodeVersionDetail,
     OperationResponse,
     OperationsResponse,
     ResolutionOption,
@@ -37,7 +42,17 @@ from .models import (
 )
 from .openapi import OpenAPIIngestError, Operation, ingest, operation_from_mapping
 from .resolve import ResolutionStatus, resolve_operation
-from .store import Document, ExtractedSpec, Job, JobResumeError, NodeVersion, Source, Store, new_id
+from .store import (
+    Document,
+    ExtractedSpec,
+    Job,
+    JobResumeError,
+    NodeVersion,
+    NodeVersionUpdateError,
+    Source,
+    Store,
+    new_id,
+)
 
 # Generous for hand-written OpenAPI docs, but bounds ingest cost against a
 # hostile upload (unbounded read + yaml.safe_load are otherwise a resource-
@@ -70,8 +85,16 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Ferrule compiler", version="3a")
+    app = FastAPI(title="Ferrule compiler", version="4c")
     store = Store()
+    # A fresh dev keypair per process, matching every other piece of state
+    # in this service (CredentialStore, ArtifactCache, ...): deliberately
+    # in-memory and ephemeral until real signing-key custody exists. Real
+    # production custody (HSM-backed, rotated, audited) is a separate,
+    # much larger concern than this milestone's scope -- reusing phase-0's
+    # generate_dev_keypair()/sign() means the actual cryptography is the
+    # same code path production would use, only the key's storage differs.
+    signing_private_key, signing_public_key = generate_dev_keypair()
 
     # Milestone 3a is deliberately process-local and unscoped. Workspace API-key
     # authentication belongs with the later multi-tenant workspace model.
@@ -369,6 +392,67 @@ def create_app() -> FastAPI:
             mock_result=mock_result,
         )
         return EvidenceResponse.model_validate(evidence)
+
+    def _node_version_model(node_version: NodeVersion) -> NodeVersionDetail:
+        return NodeVersionDetail(
+            node_version_id=node_version.id,
+            node_id=node_version.node_id,
+            semver=node_version.semver,
+            status=node_version.status,
+            artifact_hash=node_version.artifact_hash,
+            plan=node_version.plan,
+            signature=node_version.signature,
+            public_key_pem=node_version.public_key_pem,
+            approved_at=node_version.approved_at,
+            reviewer_note=node_version.reviewer_note,
+        )
+
+    @app.get("/nodes/{node_id}/versions/{semver}", response_model=NodeVersionDetail)
+    def get_node_version_detail(node_id: str, semver: str) -> NodeVersionDetail:
+        # Deliberate API.md extension, same rationale as 3a's
+        # GET /sources/{id}/operations: the evidence bundle deliberately
+        # doesn't expose the raw plan (only derived schemas and a rendered
+        # preview), so `ferrule node verify` needs a separate place to
+        # fetch the exact bytes a signature was computed over.
+        node_version = store.get_node_version(node_id, semver)
+        if node_version is None:
+            raise APIError(404, "node_version_not_found", f"node {node_id} version {semver} was not found")
+        return _node_version_model(node_version)
+
+    @app.post("/nodes/{node_id}/versions/{semver}/approve", response_model=ApprovalResponse)
+    def approve_node_version(node_id: str, semver: str, body: ApproveRequest) -> ApprovalResponse:
+        node_version = store.get_node_version(node_id, semver)
+        if node_version is None:
+            raise APIError(404, "node_version_not_found", f"node {node_id} version {semver} was not found")
+        artifact_bytes = build_artifact(node_version.plan)
+        signature = encode_signature(sign(artifact_bytes, signing_private_key))
+        public_key_pem = signing_public_key.decode("ascii")
+        approved_at = datetime.now(timezone.utc).isoformat()
+        try:
+            approved = store.approve_node_version(
+                node_id, semver, signature, public_key_pem, approved_at, body.reviewer_note
+            )
+        except NodeVersionUpdateError as error:
+            if error.reason == "not_found":
+                raise APIError(404, "node_version_not_found", f"node {node_id} version {semver} was not found") from error
+            # "already_approved" is the only other reason approve_node_version
+            # raises; API.md: "409 if already approved" -- approval is a
+            # one-time transition, never a silent re-sign of the same version.
+            raise APIError(409, "already_approved", "this node version has already been approved") from error
+        assert approved.signature is not None and approved.public_key_pem is not None
+        assert approved.approved_at is not None and approved.reviewer_note is not None
+        return ApprovalResponse(
+            node_version_id=approved.id,
+            node_id=approved.node_id,
+            semver=approved.semver,
+            status="approved",
+            artifact_hash=approved.artifact_hash,
+            plan=approved.plan,
+            signature=approved.signature,
+            public_key_pem=approved.public_key_pem,
+            approved_at=approved.approved_at,
+            reviewer_note=approved.reviewer_note,
+        )
 
     return app
 
