@@ -1912,6 +1912,48 @@ running), `mypy --strict` (17 source files across
 `ferrule_compiler`/`ferrule_cli`/`ferrule_orchestrator`, clean), and
 `make conform` (20/20) all still pass with no regressions.
 
+**Milestone 5a audit (2026-09-22)**, run by Claude Code, found and fixed 2
+issues — the first reproduced directly against real Postgres before
+fixing, not just reasoned about:
+- **High — FIXED**: the state machine had no guard against illegal
+  transitions on an already-terminal step. `record_step_success` and
+  `record_step_failure` both unconditionally overwrote whatever status a
+  step already had. Reproduced directly: a step permanently failed with
+  `auth` (an unretryable failure with a `credential_alert` already fired)
+  received a late/duplicate success report and was silently transitioned
+  to `succeeded`, with `run_events` recording
+  `step_failed(permanent_error) -> step_succeeded` — a log that reads as
+  if the step recovered after a failure SPEC.md defines as terminal. Under
+  SPEC.md §7's at-least-once delivery, a redelivered report for an
+  already-terminal step must be a safe no-op, not a state transition.
+  Fixed with a `status IN ('pending', 'running')` guard on both functions
+  (a conditional `UPDATE`, checked via `cur.rowcount`, so a no-op cleanly
+  rolls back rather than leaving an open transaction): a report against a
+  terminal step now leaves it unchanged and appends no further journal
+  entry, whether the new report agrees with the existing outcome or
+  contradicts it. Distinguishing those two cases (same-outcome redelivery
+  vs. a genuinely contradictory report, which arguably deserves louder
+  handling) is deliberately left to milestone 5c, which owns duplicate-
+  delivery semantics as its own stated test criterion — this fix only
+  closes the state-corruption hole, not the richer question. Covered by 2
+  new regression tests (late success after permanent failure; late
+  failure after success), both asserting the status *and* the exact
+  journal contents are unchanged.
+- **Low — FIXED**: `get_step` built its `RunStep` via
+  `RunStep(*row)` from a plain positional tuple, silently depending on
+  `_STEP_COLUMNS`' `SELECT` order exactly matching `RunStep`'s field
+  declaration order with nothing to catch a future mismatch — a column
+  reorder or a field added to one but not the other would silently
+  misassign values to the wrong fields rather than error. Not a live bug
+  today (the two currently agree), but the kind of landmine this project
+  has repeatedly preferred to close before it's tripped. Fixed by querying
+  with psycopg's `dict_row` factory and constructing
+  `RunStep(**row)` instead — a future mismatch is now a loud `TypeError`
+  (unexpected or missing keyword argument), not a silent misassignment.
+
+Re-verified after both fixes: `gate-5a` 21/21 (up from 19), full suite
+138/138, `mypy --strict` clean, `make conform` unaffected.
+
 ### Milestone 5b — Workflow pinning and multi-node chains
 
 Deliverables

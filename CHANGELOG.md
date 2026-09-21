@@ -7,6 +7,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 5a audit: 2 findings fixed (2026-09-22)
+
+Found by reproducing the first directly against real Postgres, not just
+reasoning about it: the state machine had no guard against illegal
+transitions on an already-terminal step. record_step_success and
+record_step_failure both unconditionally overwrote whatever status a step
+already had -- a late success report for a step already permanently
+failed with `auth` silently flipped it to succeeded, with run_events
+recording step_failed(permanent_error) -> step_succeeded, as if the step
+recovered from a failure SPEC.md defines as terminal.
+
+Fixed with a `status IN ('pending', 'running')` guard on both functions:
+a report against a terminal step is now a safe no-op (unchanged status,
+no further journal entry), matching SPEC.md section 7's at-least-once
+delivery requirement. Distinguishing same-outcome redelivery from a
+genuinely contradictory report is left to milestone 5c, which owns
+duplicate-delivery semantics as its own test criterion.
+
+Also fixed: get_step built its RunStep via a positional tuple unpack
+(RunStep(*row)), silently depending on the SELECT column order exactly
+matching the dataclass field order with nothing to catch a future
+mismatch. Switched to psycopg's dict_row factory + RunStep(**row), so a
+future rename/reorder mismatch is a loud TypeError instead of a silent
+misassignment.
+
+gate-5a passes 21/21 (up from 19, two new regression tests); 138/138 full
+suite; mypy --strict clean; make conform unaffected.
+
 ### Milestone 5a closed: orchestrator state machine on Postgres (2026-09-22)
 
 Phase 5 begins. Infrastructure decision made with the user first: this is

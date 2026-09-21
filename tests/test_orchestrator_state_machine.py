@@ -61,6 +61,32 @@ class OrchestratorStateMachineTests(unittest.TestCase):
         step = fo.record_step_success(self.conn, self.step_id)
         self.assertEqual("succeeded", step.status)
 
+    def test_late_success_report_does_not_overwrite_a_permanent_failure(self) -> None:
+        # Whole-milestone audit finding, reproduced directly before fixing:
+        # without a terminal-state guard, a late/duplicate success report
+        # silently overwrote an already-permanently-failed step back to
+        # "succeeded", producing a run_events log that read
+        # "step_failed(permanent_error) -> step_succeeded" as if an
+        # unretryable auth failure had somehow recovered.
+        failed = fo.record_step_failure(self.conn, self.step_id, "auth")
+        self.assertEqual("permanent_error", failed.status)
+
+        late_success = fo.record_step_success(self.conn, self.step_id)
+        self.assertEqual("permanent_error", late_success.status)
+
+        kinds = [kind for _, kind, _ in fo.list_events(self.conn, self.run_id)]
+        self.assertEqual(["run_started", "step_created", "step_failed"], kinds)
+
+    def test_late_contradictory_failure_report_does_not_overwrite_success(self) -> None:
+        succeeded = fo.record_step_success(self.conn, self.step_id)
+        self.assertEqual("succeeded", succeeded.status)
+
+        late_failure = fo.record_step_failure(self.conn, self.step_id, "transient")
+        self.assertEqual("succeeded", late_failure.status)
+
+        kinds = [kind for _, kind, _ in fo.list_events(self.conn, self.run_id)]
+        self.assertEqual(["run_started", "step_created", "step_succeeded"], kinds)
+
     def test_transient_failure_retries_then_routes_retryable_error(self) -> None:
         for _ in range(MAX_TRANSIENT_ATTEMPTS - 1):
             step = fo.record_step_failure(self.conn, self.step_id, "transient")
