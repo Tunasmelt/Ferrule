@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ferrule"
 version = "0.0.0"
 requires-python = ">=3.11"
-dependencies = ["cel-python>=0.5.0", "cryptography>=44", "jsonschema>=4.23", "fastapi>=0.115", "pydantic>=2", "pyyaml>=6", "httpx>=0.28"]
+dependencies = ["cel-python>=0.5.0", "cryptography>=44", "jsonschema>=4.23", "fastapi>=0.115", "pydantic>=2", "pyyaml>=6", "httpx>=0.28", "psycopg[binary]>=3.1"]
 
 [project.optional-dependencies]
 # Needed to actually run the compiler service (`python -m uvicorn
@@ -19,8 +19,8 @@ dev = ["uvicorn>=0.34"]
 ferrule = "ferrule_cli.__main__:main"
 
 [tool.setuptools]
-packages = ["ferrule_artifact", "ferrule_cli", "ferrule_interpreter", "ferrule_plan_schema", "ferrule_compiler"]
-package-dir = {ferrule_artifact = "packages/artifact/python/ferrule_artifact", ferrule_cli = "cli/ferrule_cli", ferrule_interpreter = "packages/interpreter/python/ferrule_interpreter", ferrule_plan_schema = "packages/plan-schema/python/ferrule_plan_schema", ferrule_compiler = "services/compiler/python/ferrule_compiler"}
+packages = ["ferrule_artifact", "ferrule_cli", "ferrule_interpreter", "ferrule_plan_schema", "ferrule_compiler", "ferrule_orchestrator"]
+package-dir = {ferrule_artifact = "packages/artifact/python/ferrule_artifact", ferrule_cli = "cli/ferrule_cli", ferrule_interpreter = "packages/interpreter/python/ferrule_interpreter", ferrule_plan_schema = "packages/plan-schema/python/ferrule_plan_schema", ferrule_compiler = "services/compiler/python/ferrule_compiler", ferrule_orchestrator = "services/orchestrator/python/ferrule_orchestrator"}
 
 [tool.setuptools.package-data]
 ferrule_plan_schema = ["plan.schema.json", "cel-types.json", "py.typed"]
@@ -28,3 +28,4 @@ ferrule_artifact = ["py.typed"]
 ferrule_cli = ["py.typed"]
 ferrule_interpreter = ["py.typed"]
 ferrule_compiler = ["py.typed"]
+ferrule_orchestrator = ["py.typed", "migrations/*.sql"]

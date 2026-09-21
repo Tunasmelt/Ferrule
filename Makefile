@@ -1,4 +1,4 @@
-.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b gate-3c gate-3 gate-4a gate-4b gate-4c gate-4
+.PHONY: check conform signing-conform security gate-0a gate-0b gate-0c gate-1a gate-1b gate-1c gate-2a gate-2b gate-2c gate-2d gate-2 gate-3a gate-3b gate-3c gate-3 gate-4a gate-4b gate-4c gate-4 gate-5a gate-5
 
 export GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -95,3 +95,24 @@ gate-4c:
 	python -m unittest tests.test_compiler_approval tests.test_cli_node -v
 
 gate-4: gate-4a gate-4b gate-4c
+
+gate-5a:
+	# gate-5a requires a real, reachable Postgres instance -- milestone
+	# 5a's own deliverable is "orchestrator state machine on Postgres".
+	# test_orchestrator_state_machine.py skips gracefully without one (so
+	# `make check` stays green in an environment without Postgres running),
+	# but this gate fails loudly instead of silently passing on skipped
+	# tests, since that would defeat the point of the milestone. Local dev:
+	#   docker run -d --name ferrule-postgres \
+	#     -e POSTGRES_USER=ferrule -e POSTGRES_PASSWORD=ferrule_dev_local \
+	#     -e POSTGRES_DB=ferrule -p 55432:5432 postgres:16-alpine
+	# Override the target with FERRULE_ORCHESTRATOR_DSN if pointing elsewhere.
+	# connect_timeout is required, not cosmetic: confirmed directly that a
+	# stopped container on Windows/Docker Desktop doesn't refuse the
+	# connection promptly (the host-side network proxy blackholes it
+	# instead), so an unreachable Postgres hung this check indefinitely
+	# rather than failing loudly and quickly until this was added.
+	python -c "import os, ferrule_orchestrator as fo; fo.connect(os.environ.get('FERRULE_ORCHESTRATOR_DSN', 'postgresql://ferrule:ferrule_dev_local@localhost:55432/ferrule'), connect_timeout=5).close()"
+	python -m unittest tests.test_orchestrator_failure tests.test_orchestrator_state_machine -v
+
+gate-5: gate-5a

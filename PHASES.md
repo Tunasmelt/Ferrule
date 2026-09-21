@@ -1805,21 +1805,112 @@ how to run it once people are available.
 
 **Goal:** workflows run, resume, and stay pinned.
 
-### Milestone 5a — Orchestrator state machine and journal
+### Milestone 5a — Orchestrator state machine and journal — ✅ CLOSED 2026-09-22
+
+**Infrastructure decision, made with the user before writing code**: this
+is the first milestone requiring a real Postgres instance (everything
+through Phase 4 was in-memory, deliberately). Docker was installed but not
+running; asked the user rather than assuming — they started Docker
+Desktop themselves. Local dev/test instance used throughout:
+```
+docker run -d --name ferrule-postgres \
+  -e POSTGRES_USER=ferrule -e POSTGRES_PASSWORD=ferrule_dev_local \
+  -e POSTGRES_DB=ferrule -p 55432:5432 postgres:16-alpine
+```
+(A genuine environment hiccup along the way, for the record: the container
+crashed once right after Docker Desktop started — exit 255, no error in
+its own logs — almost certainly Docker Desktop's VM still stabilizing.
+Restarting it fixed it immediately; not a code issue, but worth recording
+since it looked exactly like a hung deadlock at first and took a moment to
+rule out.)
 
 Deliverables
-- Orchestrator state machine on Postgres
-- Run journal, step traces
-- Failure classification and routing per `SPEC.md` §7
+- [x] New `services/orchestrator/python/ferrule_orchestrator`: a real,
+      Postgres-backed orchestrator state machine — `db.py` (connection +
+      forward-only migration runner, CLAUDE.md's own convention: no down-
+      migrations, a mistake gets fixed with a new forward migration),
+      `failure.py` (pure, DB-free classification — see below),
+      `state_machine.py` (`runs`/`run_steps`/`run_events` persistence and
+      transitions).
+- [x] Run journal + step traces: `run_events` is append-only (no `UPDATE`
+      statement anywhere targets it, matching the proxy's own run-journal
+      discipline) and captures every transition (`run_started`,
+      `step_created`, `step_failed`, `step_succeeded`) with a per-run
+      monotonic `seq`. Reserving that `seq` via
+      `UPDATE runs SET next_event_seq = next_event_seq + 1 ... RETURNING`
+      rather than `SELECT MAX(seq)+1 FROM run_events` was a deliberate
+      choice, not an afterthought — the latter races under concurrent
+      appends to the same run, the same class of bug this project has
+      found and fixed more than once elsewhere (the compiler's job-resume
+      race, the proxy's `SecretBindings` race). SPEC.md §7: "state
+      persisted after every transition" — each state-machine function
+      commits exactly once, after both the `run_steps` update and its
+      `run_events` append are staged in the same transaction, so a crash
+      between them can't leave the journal missing an entry for a real
+      state change.
+- [x] Failure classification and routing per SPEC.md §7, all 6 classes,
+      as a pure function (`classify_and_route`) with zero Postgres
+      dependency — classification is deterministic given
+      `(failure_class, attempt, retry_after)`, not a storage concern;
+      `state_machine.py` is the only thing that persists its decisions.
+      Full jitter (`uniform(0, min(cap, base * 2**(attempt-1)))`, the
+      standard AWS algorithm for avoiding synchronized retry storms) for
+      `transient`/`rate_limited`; `rate_limited` honours a supplied
+      `Retry-After` value over the computed backoff whenever present.
+      SPEC.md's table gives `timeout` an exact retry count ("once" = 2
+      attempts total) but leaves `transient`/`rate_limited` unspecified —
+      `MAX_TRANSIENT_ATTEMPTS`/`MAX_RATE_LIMITED_ATTEMPTS` are this
+      orchestrator's own bounded, documented defaults (3 and 5), the same
+      way `MAX_DOCUMENT_BYTES`/`MIN_RELEVANCE` etc. were chosen elsewhere
+      in this project, not literal spec requirements.
+- [x] `record_step_failure` locks the step row (`SELECT ... FOR UPDATE`)
+      for the duration of its transaction, so two concurrent failure
+      reports for the same step can't both read the same `attempt` and
+      race to write conflicting outcomes — proven with real threads
+      against real Postgres, not simulated, in
+      `test_concurrent_failure_reports_do_not_corrupt_attempt_count`.
 
 Test criteria
-- [ ] Each failure class (`transient`, `auth`, `schema_mismatch`,
-      `permission_denied`, `timeout`, `rate_limited`) routes as specified (6
-      cases)
-- [ ] Retry with backoff and jitter behaves correctly for `transient` and
-      `rate_limited` (honours `Retry-After` for the latter)
+- [x] Each failure class routes as specified (6 cases) — verified twice:
+      `test_orchestrator_failure.py` (pure, no DB, one test per class
+      against `classify_and_route` directly) and
+      `test_orchestrator_state_machine.py` (the same 6 cases end-to-end
+      against real Postgres, asserting the actual persisted `run_steps`
+      row and journaled `run_events`).
+- [x] Retry with backoff and jitter behaves correctly for `transient` and
+      `rate_limited`, honouring `Retry-After` for the latter — verified
+      that computed delays fall within `[0, cap]` at every attempt, that
+      the average delay grows with attempt number across many samples
+      (jitter is random, so this is checked statistically rather than
+      asserting a flaky strict per-call ordering), and that a supplied
+      `Retry-After` value is used exactly, overriding the computed
+      backoff, both at the pure-function level and end-to-end against
+      Postgres (the journaled `step_failed` event records the honoured
+      value).
 
-Gate `make gate-5a`
+Found and fixed while building `gate-5a`'s own connectivity check, not
+a golden-path test: the Makefile's pre-flight Postgres reachability check
+had no `connect_timeout`, and confirmed directly that a stopped container
+on Docker Desktop for Windows does not refuse a new connection promptly —
+the host-side network proxy blackholes it instead — so the check hung
+indefinitely rather than failing loudly and quickly. Fixed by adding an
+explicit `connect_timeout` parameter to `ferrule_orchestrator.connect()`
+and passing `connect_timeout=5` from the gate; re-verified directly that
+stopping the container now fails the gate loudly in ~11 seconds instead of
+hanging.
+
+`tests/test_orchestrator_state_machine.py` skips cleanly (not a failure)
+when Postgres isn't reachable, so `make check` stays green in an
+environment without it running; `gate-5a` itself additionally asserts
+connectivity first and fails loudly rather than silently passing on
+skipped tests, since that would defeat the entire point of this milestone.
+
+Gate `make gate-5a` — 19/19 tests pass (9 pure classification + 10 against
+real Postgres); `make check` (136/136 Python tests, orchestrator tests
+included and passing for real given the local Postgres instance was
+running), `mypy --strict` (17 source files across
+`ferrule_compiler`/`ferrule_cli`/`ferrule_orchestrator`, clean), and
+`make conform` (20/20) all still pass with no regressions.
 
 ### Milestone 5b — Workflow pinning and multi-node chains
 

@@ -7,6 +7,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 5a closed: orchestrator state machine on Postgres (2026-09-22)
+
+Phase 5 begins. Infrastructure decision made with the user first: this is
+the first milestone needing a real Postgres instance (everything through
+Phase 4 was deliberately in-memory). Docker was installed but not
+running; asked the user rather than assuming, and they started Docker
+Desktop themselves. Local dev/test instance:
+`docker run -d --name ferrule-postgres -e POSTGRES_USER=ferrule -e POSTGRES_PASSWORD=ferrule_dev_local -e POSTGRES_DB=ferrule -p 55432:5432 postgres:16-alpine`.
+
+New services/orchestrator/python/ferrule_orchestrator: a real Postgres-
+backed state machine (runs/run_steps/run_events, forward-only migrations)
+implementing SPEC.md section 7's failure classification for all 6 classes
+(transient, auth, schema_mismatch, permission_denied, timeout,
+rate_limited) as a pure, DB-free function, with full-jitter backoff and
+Retry-After honoring for rate_limited. run_events is append-only and
+reserves its per-run seq via an atomic UPDATE...RETURNING rather than
+SELECT MAX(seq)+1, which would race under concurrent appends -- the same
+class of bug this project has found and fixed more than once elsewhere.
+record_step_failure locks the step row for its transaction, proven
+race-free with real concurrent threads against real Postgres.
+
+Found and fixed while building gate-5a's own connectivity check, not a
+golden-path test: no connect_timeout meant a stopped container on Docker
+Desktop for Windows hung the check indefinitely instead of failing loudly
+(the host-side network proxy blackholes the connection rather than
+refusing it promptly). Fixed; verified the gate now fails in ~11s instead
+of hanging.
+
+test_orchestrator_state_machine.py skips cleanly without Postgres (make
+check stays green); gate-5a itself asserts connectivity first and fails
+loudly rather than silently passing on skipped tests.
+
+gate-5a passes (19/19); 136/136 full Python suite; mypy --strict clean
+across 17 source files; make conform unaffected.
+
 ### Milestone 4c tooling built: approval, signing, CLI (2026-09-22)
 
 Scope decision made with the user before writing code: the reviewer timing
