@@ -1654,6 +1654,44 @@ Gate `make gate-4b` — 8/8 tests pass; `make check` (104/104 Python tests),
 `mypy --strict` (13 source files, clean), and `make conform` (20/20) all
 still pass with no regressions.
 
+**Milestone 4b audit (2026-09-22)**, run by Claude Code, found and fixed 1
+issue — reproduced directly (by forcing a real exception mid-resume, not
+just reasoned about) before fixing:
+- **High — FIXED**: `resume_job`'s `kind="compile"` branch had a gap
+  between two separate commits to the same job. `Store.resume_needs_input`
+  atomically marks the job `"succeeded"` (a real, single-use guarantee)
+  the moment the ambiguous choice is resolved — but *finishing the
+  compile* (`require_source`/`require_spec`/`compile_operation`/
+  persisting the `NodeVersion`) happens afterward, separately, with no
+  guard. Reproduced directly: forcing an exception in that window (a stand
+  -in for any future bug or edge case in `compile_operation`, not
+  something reachable via today's inputs alone) crashed the *immediate*
+  `resume_job` call itself with a raw, unhandled 500 — worse than a later
+  poller failing — and left the job permanently stuck: already consumed
+  (can never be resumed again), and `GET /jobs/{id}` would *also* crash on
+  it forever after (`get_job`'s `kind="compile"` branch indexes
+  `job.result["compile_outcome"]`, which only a successful finish ever
+  writes). Fixed by wrapping the finish-compiling step in `resume_job` in
+  a try/except: an `APIError` re-raises cleanly after recording a
+  `"failed"` terminal job state; any other exception is recorded the same
+  way and re-raised as a clean `APIError(500, "compile_failed", ...)`.
+  `get_job` gained a matching branch so polling a job in this terminal
+  state returns the same clean error instead of crashing. Verified: the
+  original reproduction now returns clean JSON error envelopes at every
+  step (immediate resume, later poll, and a second resume attempt
+  correctly gets `409 job_not_resumable` rather than hanging or crashing);
+  covered by a permanent regression test
+  (`test_resume_compile_failure_returns_clean_error_and_does_not_get_stuck`).
+
+Also reviewed and documented, not fixed (no code change warranted): 
+`NodeCompileRequest`'s `execution_class`, `sandbox_credential_ref`, and
+`constraints` fields are accepted (matching `docs/API.md`'s request shape)
+but have no effect on compilation — Phase 3's compiler only ever produces
+GET, read-only nodes, so there is currently no way for a caller-stated
+constraint to actually be violated by what gets compiled. Worth revisiting
+once a future milestone's compiler can produce anything else; validating
+constraints that can never currently be violated today would be dead code.
+
 ### Milestone 4c — Approval, signing, freeze
 
 Deliverables

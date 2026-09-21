@@ -7,6 +7,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versions here refer to
 
 ## [Unreleased] — Process
 
+### Milestone 4b audit: stuck-job-on-compile-failure fixed (2026-09-22)
+
+Found by reproducing it directly (forcing a real exception mid-resume),
+not just reasoning about it: resume_job's kind="compile" branch had a gap
+between two separate commits to the same job. Store.resume_needs_input
+atomically marks the job "succeeded" the moment the ambiguous choice is
+resolved, but finishing the compile happens afterward with no guard. Any
+exception in that window crashed the immediate resume_job call itself with
+a raw, unhandled 500 (worse than just a later poller failing) and left the
+job permanently stuck -- already consumed, unresumable, and GET /jobs/{id}
+would also crash on it forever after.
+
+Fixed by wrapping the finish-compiling step in try/except: an APIError
+re-raises cleanly after recording a "failed" terminal job state; any other
+exception is recorded the same way and re-raised as a clean
+APIError(500, "compile_failed", ...). get_job gained a matching branch so
+polling a job in this state returns the same clean error instead of
+crashing. Verified the original reproduction now returns clean JSON at
+every step; covered by a permanent regression test.
+
+Also reviewed and documented (no code change needed): NodeCompileRequest's
+execution_class/sandbox_credential_ref/constraints fields are accepted but
+have no effect on compilation, since Phase 3 only ever produces GET,
+read-only nodes -- there's currently no way for a stated constraint to
+actually be violated. Revisit once a future milestone's compiler can
+produce anything else.
+
+105/105 full suite; mypy --strict clean; make conform unaffected.
+
 ### Milestone 4b closed: evidence bundle, POST /nodes/compile (2026-09-19)
 
 This milestone's own deliverables name a real endpoint

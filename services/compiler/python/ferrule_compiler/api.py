@@ -278,6 +278,11 @@ def create_app() -> FastAPI:
             if "node_version_id" in outcome:
                 return NodeCompileSuccess.model_validate(outcome)
             return NodeCompileFailure.model_validate(outcome)
+        if job.kind == "compile" and job.status == "failed":
+            # Terminal, not resumable -- resume_job's except-Exception
+            # branch above already put it here after finishing the
+            # ambiguity resolution but failing to complete the compile.
+            raise APIError(500, "compile_failed", "this node failed to compile; retry via POST /nodes/compile")
         return NeedsInputResponse(
             status="needs_input",
             question="Choose one matching operation.",
@@ -298,10 +303,31 @@ def create_app() -> FastAPI:
         assert job.result is not None
         if job.kind == "compile":
             assert job.source_id is not None
-            source = require_source(job.source_id)
-            spec = require_spec(job.source_id)
-            operation = operation_from_mapping(cast(Mapping[str, object], job.result["operation"]))
-            outcome = _compile_and_store(source, spec, operation)
+            # resume_needs_input above already committed this job as
+            # "succeeded" (atomically, single-use) once the ambiguity was
+            # resolved -- but resolving the choice and finishing the
+            # compile are two different things, and everything from here
+            # down can still fail. Without this try/except, any exception
+            # here (confirmed by reproduction: even require_source/
+            # require_spec or an unexpected compile_operation failure)
+            # left the job permanently stuck -- already consumed so it
+            # can never be resumed again, and unpollable, since get_job's
+            # kind="compile" branch indexes job.result["compile_outcome"],
+            # which only this block ever writes. The immediate caller also
+            # got a raw, unhandled 500 instead of a clean error envelope.
+            try:
+                source = require_source(job.source_id)
+                spec = require_spec(job.source_id)
+                operation = operation_from_mapping(cast(Mapping[str, object], job.result["operation"]))
+                outcome = _compile_and_store(source, spec, operation)
+            except APIError:
+                store.put_job(Job(job.id, "compile", "failed", {"error": "compile could not be completed"}))
+                raise
+            except Exception as error:
+                store.put_job(Job(job.id, "compile", "failed", {"error": str(error)}))
+                raise APIError(
+                    500, "compile_failed", "an unexpected error occurred while compiling this node"
+                ) from error
             store.put_job(Job(job.id, "compile", "succeeded", {"compile_outcome": outcome.model_dump()}))
             return outcome
         return ResolvedResponse(

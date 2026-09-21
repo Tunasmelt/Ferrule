@@ -138,6 +138,40 @@ class CompilerNodesAPITests(unittest.TestCase):
                     evidence = self.client.get(compiled["evidence_url"])
                     self.assertEqual(200, evidence.status_code)
 
+    def test_resume_compile_failure_returns_clean_error_and_does_not_get_stuck(self) -> None:
+        # Whole-milestone audit finding: resume_needs_input already commits
+        # a kind="compile" job as "succeeded" (atomically, single-use)
+        # before the actual compile step runs. Without handling, any
+        # exception during that step -- confirmed via require_source/
+        # require_spec or an unexpected compile_operation failure -- left
+        # the job permanently stuck (already consumed, unresumable) and
+        # crashed both the immediate resume call and any later poll with a
+        # raw, unhandled 500 instead of a clean error envelope.
+        from unittest.mock import patch
+
+        import ferrule_compiler.api as api_module
+
+        source_id = self._register_source("jsonplaceholder.json", "https://jsonplaceholder.typicode.com")
+        compiled = self.client.post(
+            "/nodes/compile",
+            json={"source_id": source_id, "task": "Fetch a single resource by its numeric id"},
+        ).json()
+        resume_url = compiled["resume_url"]
+        job_id = resume_url.split("/")[2]
+
+        with patch.object(api_module, "compile_operation", side_effect=RuntimeError("boom")):
+            resumed = self.client.post(resume_url, json={"choice": "getUser"})
+        self.assertEqual(500, resumed.status_code)
+        self.assertEqual("compile_failed", resumed.json()["error"]["code"])
+
+        polled = self.client.get(f"/jobs/{job_id}")
+        self.assertEqual(500, polled.status_code)
+        self.assertEqual("compile_failed", polled.json()["error"]["code"])
+
+        resumed_again = self.client.post(resume_url, json={"choice": "getUser"})
+        self.assertEqual(409, resumed_again.status_code)
+        self.assertEqual("job_not_resumable", resumed_again.json()["error"]["code"])
+
 
 if __name__ == "__main__":
     unittest.main()
